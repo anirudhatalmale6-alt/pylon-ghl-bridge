@@ -1,0 +1,94 @@
+{
+  "data": {
+    "type": "solar_designs",
+    "id": "RnlPy9NMNr",
+    "attributes": {
+      "title": "6.6 kW Solar + 10 kWh Battery",
+      "label": null,
+      "is_primary": true,
+      "summary": {
+        "dc_output_kw": 6.6,
+        "storage_kwh": 10,
+        "description": "16 x 415W panels, 5kW inverter, 10kWh battery",
+        "web_proposal_url": "https://proposals.getpylon.test/p/RnlPy9NMNr",
+        "pdf_proposal_url": "https://files.getpylon.test/proposals/RnlPy9NMNr.pdf",
+        "digital_handover_url": "https://handover.getpylon.test/RnlPy9NMNr",
+        "user_manual_url": null,
+        "pv_site_information_url": null,
+        "single_line_diagram_pdf_url": "https://files.getpylon.test/sld/RnlPy9NMNr.pdf",
+        "latest_snapshot_url": "https://files.getpylon.test/snap/RnlPy9NMNr.png"
+      },
+      "locale": {
+        "au": {
+          "stc_quantity": 74,
+          "stc_value": 273800,
+          "battery_stc_quantity": 0,
+          "battery_stc_value": 0,
+          "prc_quantity": 0,
+          "prc_value": 0,
+          "veec_quantity": 0,
+          "veec_value": 0
+        }
+      },
+      "pricing": {
+        "total": 1560000,
+        "total_includes_tax": true,
+        "currency": "AUD"
+      },
+      "line_items": [
+        {
+          "key": "modules",
+          "description": "16 x Trina Vertex S+ 415W",
+          "included_in_summary_line": "subtotal",
+          "unit_amount": 24000,
+          "quantity": 16,
+          "total_amount": 384000,
+          "tax_type": "output",
+          "tax_rate": 0.1,
+          "tax_amount": 38400,
+          "is_line_hidden": false,
+          "is_amount_hidden": false,
+          "component_type": "solar_module",
+          "component_id": "TSM-415NEG9R.28"
+        },
+        {
+          "key": "stc",
+          "description": "STC rebate",
+          "included_in_summary_line": "total",
+          "unit_amount": -273800,
+          "quantity": 1,
+          "total_amount": -273800,
+          "tax_type": "none",
+          "tax_rate": null,
+          "tax_amount": null,
+          "is_line_hidden": false,
+          "is_amount_hidden": false,
+          "component_type": null,
+          "component_id": null
+        }
+      ],
+      "proposal_quote": {
+        "currency": "AUD",
+        "total_tax_formatted": "$1,418.18",
+        "total_price_formatted": "$15,600.00",
+        "deposit_amount_formatted": "$1,560.00",
+        "financed_amount_formatted": "$0.00",
+        "amount_payable_formatted": "$14,040.00",
+        "locale_au": {
+          "eligible_for_stcs": true,
+          "stc_quantity": 74,
+          "stc_value_formatted": "$2,738.00",
+          "battery_stc_quantity": 0,
+          "battery_stc_value_formatted": "$0.00",
+          "eligible_for_lgcs": false,
+          "lgc_quantity": null,
+          "lgc_value_formatted": null
+        }
+      }
+    },
+    "relationships": {
+      "solar_project": { "data": { "type": "solar_projects", "id": "rukSigcyTR" } }
+    },
+    "links": { "self": "https://api.getpylon.com/v1/solar_designs/RnlPy9NMNr" }
+  }
+}

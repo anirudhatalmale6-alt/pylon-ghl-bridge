@@ -1,0 +1,24 @@
+{
+  "name": "pylon-ghl-bridge",
+  "version": "1.0.0",
+  "description": "Middleware that pushes Pylon contract-signature and payment events into GoHighLevel contacts and opportunities.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
+  },
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "discover": "node scripts/discover.js",
+    "bootstrap-fields": "node scripts/bootstrap-fields.js",
+    "simulate": "node scripts/simulate.js",
+    "demo": "node scripts/demo.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}

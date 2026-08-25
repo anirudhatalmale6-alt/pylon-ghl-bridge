@@ -1,0 +1,54 @@
+{
+  "data": {
+    "type": "solar_projects",
+    "id": "rukSigcyTR",
+    "attributes": {
+      "reference_number": "PYL-0003-7789",
+      "site_location": [145.0709934, -37.8510383],
+      "site_country_code": "AU",
+      "site_address": {
+        "line1": "19 Parmesan Avenue",
+        "line2": "",
+        "city": "Glen Iris",
+        "state": "Victoria",
+        "zip": "3147",
+        "country": "Australia"
+      },
+      "customer_details": {
+        "name": "Andre Rieu",
+        "phone": "0400 000 000",
+        "email": "andre@example.com"
+      },
+      "site_details": {
+        "roof_type": "tile",
+        "number_of_storeys": 2,
+        "power_phases": "one",
+        "building_classification": "residential",
+        "nmi": "6203785492",
+        "meter_number": "M12345",
+        "energy_retailer": "AGL",
+        "energy_distributor": "United Energy",
+        "dnsp_preapproval_number": "DNSP-99182",
+        "mpan": ""
+      },
+      "acceptance": {
+        "is_accepted": true,
+        "manually_sold": false,
+        "latest_esignature": true,
+        "latest_esignature_pdf_url": "https://files.getpylon.test/signed/rukSigcyTR.pdf?expires=3600"
+      },
+      "job_sheet_url": "https://app.getpylon.test/job-sheets/rukSigcyTR",
+      "is_committed": true,
+      "is_archived": false,
+      "is_example": false,
+      "created_at": "2026-07-04T08:56:04+00:00",
+      "updated_at": "2026-08-25T02:10:00+00:00"
+    },
+    "relationships": {
+      "owner": { "data": { "type": "users", "id": "HOx60SiRAB" } },
+      "primary_design": { "data": { "type": "solar_designs", "id": "RnlPy9NMNr" } },
+      "latest_signed_design": { "data": { "type": "solar_designs", "id": "RnlPy9NMNr" } }
+    },
+    "links": { "self": "https://api.getpylon.com/v1/solar_projects/rukSigcyTR" }
+  }
+}
