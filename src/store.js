@@ -18,6 +18,11 @@ export class EventStore {
     this.logFile = path.join(dataDir, 'events.jsonl');
     this.stateFile = path.join(dataDir, 'state.json');
     this.state = new Map();
+    // Pylon solar_project id -> { contactId, opportunityId, ... }, written when
+    // a contract is signed. A later gateway_payments.created event carries the
+    // same project id but no customer details, so without an API token this is
+    // the only way to work out whose payment it is.
+    this.links = new Map();
     fs.mkdirSync(dataDir, { recursive: true });
     this._load();
   }
@@ -27,10 +32,24 @@ export class EventStore {
     try {
       const parsed = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
       for (const record of parsed.records ?? []) this.state.set(record.id, record);
-      logger.info('event state restored', { records: this.state.size });
+      for (const [key, value] of Object.entries(parsed.links ?? {})) this.links.set(key, value);
+      logger.info('event state restored', { records: this.state.size, links: this.links.size });
     } catch (error) {
       logger.error('could not read state file, starting empty', { error, file: this.stateFile });
     }
+  }
+
+  /** Remembers which GoHighLevel records a Pylon project ended up in. */
+  linkProject(pylonProjectId, details) {
+    if (!pylonProjectId) return;
+    const existing = this.links.get(pylonProjectId) ?? {};
+    this.links.set(pylonProjectId, { ...existing, ...details, updatedAt: new Date().toISOString() });
+    this._persist();
+  }
+
+  lookupProject(pylonProjectId) {
+    if (!pylonProjectId) return null;
+    return this.links.get(pylonProjectId) ?? null;
   }
 
   _persist() {
@@ -41,7 +60,10 @@ export class EventStore {
       this.state = new Map(kept.map((r) => [r.id, r]));
     }
     const tmp = `${this.stateFile}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify({ records: kept }, null, 2));
+    // The links map is deliberately NOT aged out with the events: a deposit can
+    // land months after the contract is signed and still needs to find its way
+    // to the right opportunity.
+    fs.writeFileSync(tmp, JSON.stringify({ records: kept, links: Object.fromEntries(this.links) }, null, 2));
     fs.renameSync(tmp, this.stateFile);
   }
 

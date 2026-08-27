@@ -7,10 +7,38 @@ running commands on the server.
 
 ## 1. Pylon — API token
 
-**Pylon → Settings → API → API tokens → Create token**
+**API access is not on by default.** Pylon's own developer FAQ says:
 
-- Permission needed: **read** (the bridge never writes to Pylon)
-- Copy the token into `PYLON_API_TOKEN` in `.env`
+> **How do I get access to Pylon's API?**
+> Please visit the API Settings in your Team Settings and contact our support staff.
+
+So if there is no "create token" button in **Team Settings → API Settings**, that
+is expected — ask Pylon support to enable API access on the team. Their FAQ also
+confirms it costs nothing extra.
+
+Once it is enabled: create a token with **read** permission (the bridge never
+writes to Pylon) and put it in `PYLON_API_TOKEN`.
+
+### Running before that happens — webhook-only mode
+
+Leave `PYLON_API_TOKEN` blank and the bridge still runs. Webhooks do not need a
+token, so this all works from day one:
+
+| Lands without a token | Needs the token |
+| --- | --- |
+| Contact created / matched on the signer's email | Contract value → opportunity value |
+| Signer name and email | Site address, system size, battery size |
+| Opportunity moved to the contract-signed stage | The signed contract PDF |
+| Link back to the Pylon project | Deposit / amount payable |
+| Timeline note on the contact | |
+| Payment amount, type, date and receipt link | |
+
+Anything in the right-hand column is **left unchanged** in GoHighLevel and
+reported as a warning on the event — never blanked out, never guessed at. Once
+the token is added, replay the events (`POST /events/{id}/replay`) and the rest
+fills in.
+
+`GET /health` reports which mode it is in.
 
 ## 2. GoHighLevel — Private Integration Token
 
@@ -38,10 +66,15 @@ Decide which pipeline the opportunity belongs to and which stage means
 "contract signed". Put the names — exactly as they read in the CRM — into:
 
 ```
-GHL_PIPELINE_NAME=Solar Sales
-GHL_SIGNED_STAGE_NAME=Contract Signed
-GHL_PAID_STAGE_NAME=Deposit Paid      # optional
+GHL_PIPELINE_NAME=Inspire Sales Leads
+GHL_SIGNED_STAGE_NAME=Contract Signed - Ready for finial approval
+GHL_PAID_STAGE_NAME=                  # optional, leave blank to not move on payment
 ```
+
+> These are the real values for location your GoHighLevel location. Note the
+> pipeline is called **Inspire Sales Leads**, not "Inspire Sales Pipeline" —
+> the names have to match the CRM exactly. `npm run discover` writes every
+> pipeline, stage and field id to `discovery.md` if they ever change.
 
 Names are fine; the bridge resolves them to ids at startup and tells you at
 startup if it can't find them.

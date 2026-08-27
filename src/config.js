@@ -58,6 +58,12 @@ export const config = {
 
   pylon: {
     apiBase: (process.env.PYLON_API_BASE || 'https://api.getpylon.com').replace(/\/$/, ''),
+    // Optional. Pylon only hands out API tokens once their support team enables
+    // API access on the team (see their developer FAQ), so the bridge has to be
+    // able to run before that happens. Without a token it works in
+    // "webhook-only" mode: everything the webhook body carries still lands in
+    // GoHighLevel, and the fields that need a lookup are reported as warnings
+    // rather than silently dropped.
     apiToken: process.env.PYLON_API_TOKEN || '',
     webhookSecret: process.env.PYLON_WEBHOOK_SECRET || '',
     // Pylon signs concat(timestamp, '.', body); reject anything older than this.
@@ -120,7 +126,6 @@ export const config = {
  */
 export function validateConfig(cfg = config) {
   const problems = [];
-  if (!cfg.pylon.apiToken) problems.push('PYLON_API_TOKEN is not set — the bridge cannot read project or design detail from Pylon.');
   if (!cfg.pylon.webhookSecret) problems.push('PYLON_WEBHOOK_SECRET is not set — incoming webhooks cannot be verified and will all be rejected.');
   if (!cfg.ghl.apiToken) problems.push('GHL_API_TOKEN is not set — the bridge cannot write to GoHighLevel.');
   if (!cfg.ghl.locationId) problems.push('GHL_LOCATION_ID is not set — GoHighLevel needs to know which sub-account to write to.');
@@ -137,4 +142,32 @@ export function validateConfig(cfg = config) {
     problems.push('BRIDGE_CALLBACK_URL is set but BRIDGE_CALLBACK_SECRET is not — the callback would be unsigned and unverifiable.');
   }
   return problems;
+}
+
+/** True when a Pylon API token is present, i.e. lookups are possible. */
+export function enrichmentEnabled(cfg = config) {
+  return Boolean(cfg.pylon.apiToken);
+}
+
+/**
+ * Things that do not stop the service but that somebody should know about.
+ * Printed at startup and returned by GET /health.
+ */
+export function configWarnings(cfg = config) {
+  const warnings = [];
+  if (!enrichmentEnabled(cfg)) {
+    warnings.push(
+      'PYLON_API_TOKEN is not set, so the bridge is running in webhook-only mode. ' +
+        'The signer name, email, Pylon deep link, stage move and payment amounts all still land in GoHighLevel. ' +
+        'The contract value, site address, system size and the signed PDF are only available through the Pylon API — ' +
+        'those will be reported as warnings on every event until a token is configured.',
+    );
+  }
+  if (!cfg.adminToken) {
+    warnings.push('ADMIN_TOKEN is not set — /events, /mapping and the deep health check will return 503.');
+  }
+  if (cfg.dryRun) {
+    warnings.push('DRY_RUN is on — nothing will actually be written to GoHighLevel.');
+  }
+  return warnings;
 }

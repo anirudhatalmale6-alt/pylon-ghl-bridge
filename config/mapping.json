@@ -40,6 +40,7 @@
           "opportunity.signed_by": "{{contract.signer_name || client.name}}",
           "opportunity.signed_by_email": "{{contract.signer_email || client.email}}",
           "opportunity.signed_contract_pdf": "{{contract.signed_pdf_stored_url}}",
+      "opportunity.signed_contract_file": "{{contract.signed_pdf_stored_url}}",
           "opportunity.system_size_kw": "{{contract.system_size_kw}}",
           "opportunity.battery_storage_kwh": "{{contract.storage_kwh}}",
           "opportunity.deposit_amount": "{{contract.deposit_amount_formatted}}",

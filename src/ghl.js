@@ -128,6 +128,27 @@ export class GhlClient {
     return contact;
   }
 
+  /**
+   * PUT /contacts/{id} — used when the contact id is already known (a payment
+   * matched to an earlier signature) and there is no email to upsert on.
+   * locationId is deliberately not sent: this endpoint rejects it.
+   */
+  async updateContact(id, payload) {
+    const data = await this.requestJsonBody('PUT', `/contacts/${encodeURIComponent(id)}`, payload);
+    if (data?.dryRun) return { id, dryRun: true };
+    return data?.contact ?? data;
+  }
+
+  /**
+   * POST /contacts/{id}/tags — adds tags without touching the ones already
+   * there. PUT /contacts/{id} with a `tags` array REPLACES the whole list, which
+   * would quietly wipe whatever else the CRM had on the record.
+   */
+  async addContactTags(id, tags) {
+    if (!tags?.length) return null;
+    return this.requestJsonBody('POST', `/contacts/${encodeURIComponent(id)}/tags`, { tags });
+  }
+
   /** GET /contacts/{id} */
   async getContact(id) {
     const data = await this.request('GET', `/contacts/${encodeURIComponent(id)}`);

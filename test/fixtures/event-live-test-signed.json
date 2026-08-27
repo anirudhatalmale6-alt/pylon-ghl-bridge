@@ -1,0 +1,37 @@
+{
+  "data": {
+    "type": "events",
+    "id": "oKcdQEqKvq962di",
+    "attributes": {
+      "name": "web_proposals.signed",
+      "created_at": "2026-08-25T02:11:00+00:00",
+      "description": "PYLON BRIDGE TEST signed proposal for 1 Test Street",
+      "customer_name": "PYLON BRIDGE TEST",
+      "customer_email": "pylon.bridge.test@inspire-solar.invalid",
+      "project_in_app_url": "https://app.getpylon.com/library/rukSigcyTR/view/RnlPy9NMNr"
+    },
+    "relationships": {
+      "solar_design": {
+        "data": {
+          "type": "solar_designs",
+          "id": "RnlPy9NMNr"
+        },
+        "links": {
+          "related": "https://api.getpylon.com/v1/solar_designs/RnlPy9NMNr"
+        }
+      },
+      "solar_project": {
+        "data": {
+          "type": "solar_projects",
+          "id": "rukSigcyTR"
+        },
+        "links": {
+          "related": "https://api.getpylon.com/v1/solar_projects/rukSigcyTR"
+        }
+      }
+    },
+    "links": {
+      "self": "https://api.getpylon.com/v1/events/oKcdQEqKvq962di"
+    }
+  }
+}

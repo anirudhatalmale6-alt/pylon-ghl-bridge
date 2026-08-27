@@ -75,6 +75,16 @@ export class PylonClient {
     this.timeoutMs = timeoutMs;
   }
 
+  /**
+   * False when no API token is configured. Pylon only issues tokens once their
+   * support team enables API access on the team, so the bridge has to keep
+   * working in the meantime — callers check this and fall back to whatever the
+   * webhook body itself carries.
+   */
+  get enabled() {
+    return Boolean(this.apiToken);
+  }
+
   get headers() {
     return {
       Authorization: `Bearer ${this.apiToken}`,

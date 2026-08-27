@@ -25,6 +25,7 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       webhookSecret: WEBHOOK_SECRET,
       toleranceSeconds: 300,
       timeoutMs: 5000,
+      ...(overrides.pylon ?? {}),
     },
     ghl: {
       apiBase: ghlBase,
@@ -48,7 +49,9 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
     callback: { url: '', secret: '', timeoutMs: 2000 },
     queue: { maxAttempts: 1, backoffSeconds: [1], concurrency: 1 },
     retentionDays: 90,
-    ...overrides,
+    // pylon and ghl are merged above, so drop them here rather than letting the
+    // top-level spread replace the whole block.
+    ...(({ pylon, ghl, ...rest }) => rest)(overrides),
   };
 }
 

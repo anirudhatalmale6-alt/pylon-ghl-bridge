@@ -1,0 +1,32 @@
+{
+  "data": {
+    "type": "events",
+    "id": "D1yqsg0HLER0sMiS",
+    "attributes": {
+      "name": "gateway_payments.created",
+      "created_at": "2026-08-25T04:30:00+00:00",
+      "description": "Payment received",
+      "purpose": "deposit",
+      "amount": 156000,
+      "currency": "AUD",
+      "receipt_url": "https://receipts.getpylon.test/D1yqsg0HLER0sMiS"
+    },
+    "relationships": {
+      "solar_design": {
+        "data": {
+          "type": "solar_designs",
+          "id": "RnlPy9NMNr"
+        }
+      },
+      "solar_project": {
+        "data": {
+          "type": "solar_projects",
+          "id": "rukSigcyTR"
+        }
+      }
+    },
+    "links": {
+      "self": "https://api.getpylon.com/v1/events/D1yqsg0HLER0sMiS"
+    }
+  }
+}

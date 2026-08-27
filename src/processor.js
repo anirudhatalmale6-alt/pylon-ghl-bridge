@@ -11,12 +11,42 @@ export const PAYMENT_EVENT = 'gateway_payments.created';
  * Kept free of HTTP concerns so it can be exercised directly by the tests.
  */
 export class Processor {
-  constructor({ config, pylon, ghl, mapping }) {
+  constructor({ config, pylon, ghl, mapping, store = null }) {
     this.config = config;
     this.pylon = pylon;
     this.ghl = ghl;
     this.mapping = mapping;
+    // Optional. Used to remember which GHL records a Pylon project landed in so
+    // a later payment event can find them without a Pylon lookup.
+    this.store = store;
     this._targets = null;
+  }
+
+  /** True when a Pylon API token is configured and lookups are possible. */
+  get canEnrich() {
+    return Boolean(this.pylon?.enabled);
+  }
+
+  /**
+   * Fetches the project and design behind an event, or returns nulls plus a
+   * plain-English warning when no Pylon API token is configured. Never throws
+   * for the no-token case — the point of webhook-only mode is that the parts
+   * that CAN land still land.
+   */
+  async fetchContext({ solarProjectId, solarDesignId, warnings, missingFields }) {
+    if (!this.canEnrich) {
+      warnings.push(
+        `No Pylon API token is configured, so ${missingFields} could not be read and were left unchanged in GoHighLevel. ` +
+          'Everything the webhook itself carries was written. Ask Pylon support to enable API access on your team ' +
+          '(Team Settings → API Settings), add the token as PYLON_API_TOKEN, and replay this event to fill the rest in.',
+      );
+      return { project: null, design: null };
+    }
+    const [project, design] = await Promise.all([
+      solarProjectId ? this.pylon.getSolarProject(solarProjectId) : Promise.resolve(null),
+      solarDesignId ? this.pylon.getSolarDesign(solarDesignId) : Promise.resolve(null),
+    ]);
+    return { project, design };
   }
 
   setMapping(mapping) {
@@ -129,12 +159,15 @@ export class Processor {
       );
     }
 
-    const [project, design] = await Promise.all([
-      this.pylon.getSolarProject(solarProjectId),
-      solarDesignId ? this.pylon.getSolarDesign(solarDesignId) : Promise.resolve(null),
-    ]);
+    const warnings = [];
+    const { project, design } = await this.fetchContext({
+      solarProjectId,
+      solarDesignId,
+      warnings,
+      missingFields: 'the contract value, site address, system size and the signed contract PDF',
+    });
 
-    if (!project) {
+    if (this.canEnrich && !project) {
       throw new IntegrationError(`Pylon returned no solar project for id ${solarProjectId}.`, {
         kind: 'not_found',
         system: 'Pylon',
@@ -143,6 +176,10 @@ export class Processor {
     }
 
     const payload = normalizeSignedEvent({ event, project, design });
+    // In webhook-only mode there is no project object, but the event still tells
+    // us which project it was — keep the id so it can be mapped and linked.
+    payload.project.id = payload.project.id || solarProjectId;
+    payload.contract.design_id = payload.contract.design_id || solarDesignId;
 
     // 1. Re-host the signed PDF before anything is mapped — the Pylon link is
     //    only valid for an hour, so the CRM must hold a copy, not a pointer.
@@ -152,7 +189,7 @@ export class Processor {
 
     const index = await this.fieldIndex();
     const targets = await this.resolveTargets();
-    const warnings = [...contract.warnings];
+    warnings.push(...contract.warnings);
 
     // 2. Contact.
     const contactResult = await this.writeContact({ mapping, payload, index, warnings });
@@ -189,8 +226,19 @@ export class Processor {
       }
     }
 
+    // Remember where this project landed so a later payment event — which
+    // arrives with the project id but no customer details — can find it.
+    this.store?.linkProject(payload.project.id, {
+      contactId: contactResult.id,
+      opportunityId: opportunityResult.id,
+      contactName: payload.client.name,
+      contactEmail: payload.client.email,
+      signedAt: payload.contract.signed_at,
+    });
+
     return {
       eventName: SIGNED_EVENT,
+      mode: this.canEnrich ? 'full' : 'webhook-only',
       contactId: contactResult.id,
       contactCustomFields: contactResult.written,
       opportunityId: opportunityResult.id,
@@ -228,15 +276,50 @@ export class Processor {
       };
     }
 
-    const [project, design] = await Promise.all([
-      this.pylon.getSolarProject(solarProjectId),
-      solarDesignId ? this.pylon.getSolarDesign(solarDesignId) : Promise.resolve(null),
-    ]);
+    const warnings = [];
+    const { project, design } = await this.fetchContext({
+      solarProjectId,
+      solarDesignId,
+      warnings,
+      missingFields: "the payer's name and email address",
+    });
 
     const payload = normalizePaymentEvent({ event, project, design });
+    payload.project.id = payload.project.id || solarProjectId;
+
     const index = await this.fieldIndex();
     const targets = await this.resolveTargets();
-    const warnings = [];
+
+    // Without a Pylon token the payment event carries no customer details at
+    // all, so fall back to the contact this project was linked to when the
+    // contract was signed.
+    const link = this.store?.lookupProject(solarProjectId) ?? null;
+    if (!payload.client.email && !payload.client.phone && link?.contactId) {
+      warnings.push(
+        `The payer's details were not in the webhook, so this payment was matched to the contact recorded when project ${solarProjectId} was signed (${link.contactName || link.contactId}).`,
+      );
+      const linkedResult = await this.writePaymentToKnownContact({
+        mapping,
+        payload,
+        index,
+        warnings,
+        link,
+        targets,
+      });
+      return linkedResult;
+    }
+
+    if (!payload.client.email && !payload.client.phone) {
+      return {
+        skipped: true,
+        eventName: PAYMENT_EVENT,
+        mode: this.canEnrich ? 'full' : 'webhook-only',
+        reason:
+          `This payment carried no customer details, and project ${solarProjectId} has not been through a contract-signed event on this bridge, ` +
+          'so there is nothing to match it to. Nothing was written. Once the signature for this project has been processed, replay this event and it will land.',
+        warnings,
+      };
+    }
 
     const contactResult = await this.writeContact({ mapping, payload, index, warnings });
     const opportunityResult = await this.writeOpportunity({
@@ -273,6 +356,84 @@ export class Processor {
     };
   }
 
+  /**
+   * Writes a payment onto the contact and opportunity we already know about,
+   * skipping the upsert entirely. This is the path taken in webhook-only mode,
+   * where the payment event carries an amount but no way to identify the payer.
+   */
+  async writePaymentToKnownContact({ mapping, payload, index, warnings, link, targets }) {
+    const writeEmpty = this.mapping.writeEmptyValues === true;
+
+    const contactFields = buildCustomFields({
+      mappingFields: mapping.contact?.customFields ?? {},
+      source: payload,
+      index,
+      model: 'contact',
+      valueKey: 'value',
+      writeEmpty,
+    });
+    for (const reference of contactFields.unresolved) {
+      warnings.push(`Contact field "${reference}" does not exist in GoHighLevel and was skipped.`);
+    }
+    if (contactFields.entries.length) {
+      await this.ghl.updateContact(link.contactId, { customFields: cleanCustomFields(contactFields.entries) });
+    }
+
+    const tags = (mapping.contact?.tags ?? []).map((tag) => render(tag, payload)).filter(Boolean);
+    await this.ghl.addContactTags(link.contactId, tags);
+
+    const opportunityFields = buildCustomFields({
+      mappingFields: mapping.opportunity?.customFields ?? {},
+      source: payload,
+      index,
+      model: 'opportunity',
+      valueKey: 'fieldValue',
+      writeEmpty,
+    });
+    for (const reference of opportunityFields.unresolved) {
+      warnings.push(`Opportunity field "${reference}" does not exist in GoHighLevel and was skipped.`);
+    }
+
+    let opportunityId = link.opportunityId ?? null;
+    if (opportunityId) {
+      const body = {};
+      if (opportunityFields.entries.length) body.customFields = cleanCustomFields(opportunityFields.entries);
+      if (targets.paidStage?.id) {
+        body.pipelineStageId = targets.paidStage.id;
+        body.pipelineId = targets.pipeline.id;
+      }
+      if (Object.keys(body).length) await this.ghl.updateOpportunity(opportunityId, body);
+    } else {
+      warnings.push(
+        'No opportunity was recorded for this project when the contract was signed, so only the contact was updated.',
+      );
+    }
+
+    let noteAdded = false;
+    if (this.config.ghl.addNote && mapping.note) {
+      const body = render(mapping.note, payload);
+      if (body) {
+        await this.ghl.createContactNote(link.contactId, body);
+        noteAdded = true;
+      }
+    }
+
+    return {
+      eventName: PAYMENT_EVENT,
+      mode: 'webhook-only',
+      matchedVia: 'pylon-project-link',
+      contactId: link.contactId,
+      opportunityId,
+      opportunityStage: opportunityId ? targets.paidStage?.name ?? null : null,
+      amount: payload.payment.amount,
+      currency: payload.payment.currency,
+      purpose: payload.payment.purpose,
+      fieldsWritten: contactFields.entries.length + (opportunityId ? opportunityFields.entries.length : 0),
+      noteAdded,
+      warnings,
+    };
+  }
+
   // ---------------------------------------------------------------- parts
 
   async storeContractPdf(payload) {
@@ -280,9 +441,13 @@ export class Processor {
     const sourceUrl = payload.project.signed_pdf_url || payload.contract.proposal_pdf_url;
 
     if (!sourceUrl) {
-      warnings.push(
-        'Pylon returned no signed-contract PDF link for this project, so no document was uploaded. Check that the e-signature completed rather than the proposal simply being viewed.',
-      );
+      // In webhook-only mode the caller has already said why nothing could be
+      // read from Pylon; repeating it here would just be noise.
+      if (this.canEnrich) {
+        warnings.push(
+          'Pylon returned no signed-contract PDF link for this project, so no document was uploaded. Check that the e-signature completed rather than the proposal simply being viewed.',
+        );
+      }
       return { url: null, buffer: null, filename: null, bytes: 0, warnings };
     }
 

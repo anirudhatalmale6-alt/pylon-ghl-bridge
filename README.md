@@ -52,8 +52,39 @@ own media library. What lands in the CRM never expires.
 ## Requirements
 
 - Node.js 20.11 or newer (no database, no other services)
-- A Pylon API token with `read` permission, and a webhook destination
+- A Pylon webhook destination
 - A GoHighLevel Private Integration Token for the sub-account
+- *Optional but recommended:* a Pylon API token with `read` permission
+
+## Two modes
+
+Pylon does not hand out API tokens by default — their developer FAQ says API
+access has to be switched on by their support team. So the bridge runs either
+way:
+
+| | **Webhook-only** (no `PYLON_API_TOKEN`) | **Full** (token configured) |
+| --- | --- | --- |
+| Contact created / matched | yes | yes |
+| Signer name and email | yes | yes |
+| Stage → contract signed | yes | yes |
+| Link back to Pylon | yes | yes |
+| Payment amount / type / receipt | yes | yes |
+| **Opportunity value = contract value** | no | yes |
+| Site address, system size, battery | no | yes |
+| **Signed contract PDF** | no | yes |
+
+In webhook-only mode the right-hand-column fields are **left unchanged** and
+reported as a warning on the event — never blanked, never guessed at. Add the
+token later and replay the events (`POST /events/{id}/replay`) to fill them in.
+
+`GET /health` reports which mode it is in.
+
+## Proof it works
+
+[docs/LIVE-TEST.md](docs/LIVE-TEST.md) — a real run against a live GoHighLevel
+account: contract value on the opportunity, the stage move, all three data sets
+in their fields, and the signed PDF attached to both the opportunity and the
+contact.
 
 ## Setup
 

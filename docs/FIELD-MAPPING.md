@@ -67,6 +67,27 @@ Run `npm run discover` to print all three for every field in your account.
 2. **A field that does not exist is reported, not guessed at.** The event
    succeeds, and the missing field is listed under `warnings` on
    `GET /events/:id`. Nothing is silently dropped.
+3. **Without a Pylon API token, only some paths have values.** The webhook body
+   carries `event.*`, the signer's name and email, the Pylon deep link, and the
+   whole of `payment.*`. Everything else — `project.*`, `contract.*` and the
+   client's address and phone — needs a lookup. Those come out empty, so by rule
+   1 the CRM field is left unchanged and rule 2 puts a warning on the event.
+   See [SETUP.md](SETUP.md#running-before-that-happens--webhook-only-mode).
+
+### The signed contract PDF
+
+Three mapping lines, three different things:
+
+| Mapping line | Field type | What lands |
+| --- | --- | --- |
+| `opportunity.signed_contract_file` | FILE_UPLOAD | the PDF **as a file on the opportunity** |
+| `opportunity.signed_contract_pdf` | TEXT | a permanent link to it |
+| `contact.signed_contract_file` | FILE_UPLOAD | the PDF as an attachment on the contact |
+
+All three read from `{{contract.signed_pdf_stored_url}}` — the URL in *your*
+media library, not Pylon's. Never map a CRM field to
+`{{contract.signed_pdf_url}}`: that is Pylon's own link and it expires after an
+hour.
 
 ## 3. Checking your map against the live account
 

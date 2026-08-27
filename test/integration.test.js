@@ -98,7 +98,14 @@ test('a signed contract lands in GoHighLevel end to end', async (t) => {
   assert.equal(oppFields.cf_addr, '19 Parmesan Avenue, Glen Iris, Victoria, 3147');
 
   // All three data sets present: contract, client, payment terms.
-  assert.equal(record.result.fieldsWritten, 17);
+  // 14 opportunity fields + the contract PDF as a file on the opportunity, plus
+  // 3 on the contact.
+  assert.equal(record.result.fieldsWritten, 18);
+  assert.equal(
+    oppFields.cf_o_file,
+    'https://storage.googleapis.com/ghl/media-1.pdf',
+    'the signed contract also lands as a file on the opportunity itself',
+  );
 
   // --- the human-readable note -------------------------------------------
   const note = h.ghl.find('POST', '/contacts/contact-1/notes');
@@ -395,4 +402,178 @@ test('the webhook secret guard also rejects a stale replay', async (t) => {
   });
   assert.equal(response.status, 401);
   assert.match(response.json.error, /timestamp/i);
+});
+
+// ---------------------------------------------------------------------------
+// Webhook-only mode: Pylon only issues API tokens once their support team
+// enables API access, so the bridge has to be useful before that happens.
+// ---------------------------------------------------------------------------
+
+const NO_PYLON_TOKEN = { pylon: { apiToken: '' } };
+
+test('without a Pylon API token the contact, stage and Pylon link still land', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  const response = await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  assert.equal(response.status, 202);
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(record.status, 'succeeded', JSON.stringify(record.error));
+  assert.equal(record.result.mode, 'webhook-only');
+
+  assert.equal(
+    h.pylon.calls.length,
+    0,
+    'with no token the bridge must not call Pylon at all, rather than calling it and failing',
+  );
+
+  const upsert = h.ghl.calls.find((c) => c.path === '/contacts/upsert');
+  assert.ok(upsert, 'the contact is still written');
+  assert.equal(upsert.body.email, 'andre@example.com');
+  assert.equal(upsert.body.firstName, 'Andre');
+  assert.equal(upsert.body.lastName, 'Rieu');
+
+  const created = h.ghl.calls.find((c) => c.method === 'POST' && c.path === '/opportunities/');
+  assert.ok(created, 'the opportunity is still created');
+  assert.equal(created.body.pipelineStageId, 'stage-signed', 'and still moved to the signed stage');
+});
+
+test('webhook-only mode names the fields it could not fill instead of failing silently', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const { warnings } = h.bridge.store.get('oKcdQEqKvq962di').result;
+  const joined = warnings.join(' ');
+  assert.match(joined, /No Pylon API token is configured/);
+  assert.match(joined, /contract value/);
+  assert.match(joined, /signed contract PDF/);
+  assert.match(joined, /Team Settings/, 'and says where to go to fix it');
+
+  assert.equal(
+    warnings.filter((w) => /no signed-contract PDF link/.test(w)).length,
+    0,
+    'the generic "no PDF" warning is suppressed — it would just repeat the cause',
+  );
+});
+
+test('webhook-only mode does not invent a contract value', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const created = h.ghl.calls.find((c) => c.method === 'POST' && c.path === '/opportunities/');
+  assert.equal(
+    created.body.monetaryValue,
+    undefined,
+    'the contract value is not available without the API, so the field is left alone rather than zeroed',
+  );
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.monetaryValue, null);
+
+  const uploads = h.ghl.calls.filter((c) => c.path === '/medias/upload-file');
+  assert.equal(uploads.length, 0, 'and no empty PDF is uploaded');
+});
+
+test('a payment with no customer details is matched to the contract that was signed earlier', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const contactId = h.bridge.store.get('oKcdQEqKvq962di').result.contactId;
+  const opportunityId = h.bridge.store.get('oKcdQEqKvq962di').result.opportunityId;
+  const callsBefore = h.ghl.calls.length;
+
+  await postWebhook(h.bridge.base, readFixture('event-payment.json'));
+  await h.bridge.queue.onIdle();
+
+  const payment = h.bridge.store.get('D1yqsg0HLER0sMiS');
+  assert.equal(payment.status, 'succeeded', JSON.stringify(payment.error));
+  assert.equal(payment.result.matchedVia, 'pylon-project-link');
+  assert.equal(payment.result.contactId, contactId, 'the same contact, found via the stored project link');
+  assert.equal(payment.result.opportunityId, opportunityId);
+  assert.equal(payment.result.amount, 1560, 'the amount comes straight out of the webhook body');
+
+  const after = h.ghl.calls.slice(callsBefore);
+  assert.equal(
+    after.filter((c) => c.path === '/contacts/upsert').length,
+    0,
+    'no upsert — there is no email in a payment event, so upserting would create a blank duplicate',
+  );
+  const tagCall = after.find((c) => c.method === 'POST' && c.path === `/contacts/${contactId}/tags`);
+  assert.ok(tagCall, 'the contact is tagged through the additive endpoint');
+  assert.deepEqual(tagCall.body.tags, ['payment-received']);
+
+  const oppUpdate = after.find((c) => c.method === 'PUT' && c.path === `/opportunities/${opportunityId}`);
+  assert.ok(oppUpdate, 'the payment is written onto the opportunity');
+  assert.equal(oppUpdate.body.monetaryValue, undefined, 'a deposit must never overwrite the contract value');
+});
+
+test('a payment for a project that was never signed here is skipped, not guessed at', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  // No signed event first, so there is no link to resolve.
+  await postWebhook(h.bridge.base, readFixture('event-payment.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('D1yqsg0HLER0sMiS');
+  assert.equal(record.status, 'succeeded');
+  assert.equal(record.result.skipped, true);
+  assert.match(record.result.reason, /has not been through a contract-signed event/);
+  assert.equal(
+    h.ghl.calls.filter((c) => c.method !== 'GET').length,
+    0,
+    'nothing at all is written when the payer cannot be identified',
+  );
+});
+
+test('the project link survives a restart', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const expected = h.bridge.store.lookupProject('rukSigcyTR');
+  assert.ok(expected?.contactId, 'the link is recorded');
+
+  // Same data directory, fresh store — this is what a service restart does.
+  const { EventStore } = await import('../src/store.js');
+  const reopened = new EventStore({ dataDir: h.config.dataDir, retentionDays: 90 });
+  assert.deepEqual(reopened.lookupProject('rukSigcyTR'), expected);
+});
+
+test('health reports webhook-only mode as healthy, not broken', async (t) => {
+  const h = await harness({ config: NO_PYLON_TOKEN });
+  t.after(() => h.close());
+
+  const response = await fetch(`${h.bridge.base}/health?deep=1`, {
+    headers: { Authorization: `Bearer ${h.config.adminToken}` },
+  });
+  const body = await response.json();
+  assert.equal(response.status, 200, JSON.stringify(body));
+  assert.equal(body.ok, true);
+  assert.equal(body.mode, 'webhook-only');
+  assert.equal(body.checks.pylon.skipped, true);
+  assert.equal(body.checks.goHighLevel.ok, true, 'GoHighLevel is still genuinely probed');
+  assert.match(body.warnings.join(' '), /webhook-only mode/);
+});
+
+test('a Pylon token restores the full picture — same event, contract value and PDF land', async (t) => {
+  const h = await harness();
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const result = h.bridge.store.get('oKcdQEqKvq962di').result;
+  assert.equal(result.mode, 'full');
+  assert.equal(result.monetaryValue, 15600);
+  assert.ok(result.contractFileUrl, 'and the PDF is re-hosted');
 });

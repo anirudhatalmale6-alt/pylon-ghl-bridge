@@ -23,6 +23,8 @@ const WANTED = [
   ['opportunity', 'opportunity.signed_by', 'Signed By', 'TEXT'],
   ['opportunity', 'opportunity.signed_by_email', 'Signed By Email', 'TEXT'],
   ['opportunity', 'opportunity.signed_contract_pdf', 'Signed Contract PDF', 'TEXT'],
+  // The PDF as an actual file on the opportunity, not just a link to it.
+  ['opportunity', 'opportunity.signed_contract_file', 'Signed Contract File', 'FILE_UPLOAD'],
   ['opportunity', 'opportunity.system_size_kw', 'System Size kW', 'NUMERICAL'],
   ['opportunity', 'opportunity.battery_storage_kwh', 'Battery Storage kWh', 'NUMERICAL'],
   ['opportunity', 'opportunity.deposit_amount', 'Deposit Amount', 'TEXT'],

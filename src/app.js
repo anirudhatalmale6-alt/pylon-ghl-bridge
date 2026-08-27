@@ -1,5 +1,5 @@
 import express from 'express';
-import { config as defaultConfig, validateConfig } from './config.js';
+import { config as defaultConfig, configWarnings, enrichmentEnabled, validateConfig } from './config.js';
 import { logger } from './lib/logger.js';
 import { IntegrationError } from './lib/errors.js';
 import { PylonClient, verifyWebhookSignature } from './pylon.js';
@@ -29,8 +29,10 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const pylon = new PylonClient(config.pylon);
   const ghl = new GhlClient({ ...config.ghl, dryRun: config.dryRun });
   const store = new EventStore({ dataDir: config.dataDir, retentionDays: config.retentionDays });
-  const processor = new Processor({ config, pylon, ghl, mapping });
+  const processor = new Processor({ config, pylon, ghl, mapping, store });
   const notify = createNotifier(config.callback);
+
+  for (const warning of configWarnings(config)) logger.warn(warning);
 
   const queue = new RetryQueue({
     store,
@@ -110,13 +112,19 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
       service: 'pylon-ghl-bridge',
       uptimeSeconds: Math.round(process.uptime()),
       dryRun: config.dryRun,
+      mode: enrichmentEnabled(config) ? 'full' : 'webhook-only',
+      warnings: configWarnings(config),
       events: store.stats(),
     };
 
     if (req.query.deep === '1') {
       if (!isAuthorised(req, config)) return res.status(401).json({ ok: false, error: 'Admin token required for a deep health check.' });
       const checks = {};
-      checks.pylon = await probe(() => pylon.ping());
+      // No Pylon token is a supported configuration, not a failure — say so
+      // rather than reporting the whole service as unhealthy.
+      checks.pylon = enrichmentEnabled(config)
+        ? await probe(() => pylon.ping())
+        : { ok: true, skipped: true, detail: 'No PYLON_API_TOKEN configured — running in webhook-only mode.' };
       checks.goHighLevel = await probe(() => ghl.ping());
       checks.pipeline = await probe(async () => {
         const targets = await processor.resolveTargets({ fresh: true });

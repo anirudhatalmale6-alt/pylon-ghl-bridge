@@ -81,6 +81,7 @@ export const GHL_FIELDS = [
   { id: 'cf_by', name: 'Signed By', fieldKey: 'opportunity.signed_by', dataType: 'TEXT', model: 'opportunity' },
   { id: 'cf_byemail', name: 'Signed By Email', fieldKey: 'opportunity.signed_by_email', dataType: 'TEXT', model: 'opportunity' },
   { id: 'cf_pdf', name: 'Signed Contract PDF', fieldKey: 'opportunity.signed_contract_pdf', dataType: 'TEXT', model: 'opportunity' },
+  { id: 'cf_o_file', name: 'Signed Contract File', fieldKey: 'opportunity.signed_contract_file', dataType: 'FILE_UPLOAD', model: 'opportunity' },
   { id: 'cf_kw', name: 'System Size kW', fieldKey: 'opportunity.system_size_kw', dataType: 'NUMERICAL', model: 'opportunity' },
   { id: 'cf_kwh', name: 'Battery Storage kWh', fieldKey: 'opportunity.battery_storage_kwh', dataType: 'NUMERICAL', model: 'opportunity' },
   { id: 'cf_dep', name: 'Deposit Amount', fieldKey: 'opportunity.deposit_amount', dataType: 'TEXT', model: 'opportunity' },
@@ -185,6 +186,14 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
 
     if (req.method === 'POST' && /^\/contacts\/[^/]+\/notes$/.test(url.pathname)) {
       return json(res, 200, { note: { id: 'note-1', body: body?.body } });
+    }
+
+    if (req.method === 'POST' && /^\/contacts\/[^/]+\/tags$/.test(url.pathname)) {
+      return json(res, 200, { tags: body?.tags ?? [] });
+    }
+
+    if (req.method === 'PUT' && /^\/contacts\/[^/]+$/.test(url.pathname)) {
+      return json(res, 200, { contact: { id: url.pathname.split('/').pop(), ...body } });
     }
 
     return json(res, 404, { message: `no fake route for ${req.method} ${url.pathname}` });

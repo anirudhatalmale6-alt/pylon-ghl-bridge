@@ -6,3 +6,9 @@ data/
 *.log
 .DS_Store
 docs/discovery.md
+
+# Generated against the client's live account — contains their pipeline, stage,
+# field and record ids. Kept out of a public repo; regenerate with
+# `npm run discover` / `node scripts/live-test.js`.
+docs/discovery.md
+docs/live-test-output.txt
