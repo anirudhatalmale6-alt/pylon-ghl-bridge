@@ -146,6 +146,27 @@ export function checkInvoiceStages(mapping) {
       warnings.push(`Invoice stages for "${eventName}" reuse the key(s) ${[...new Set(duplicates)].join(', ')}. Keys must be unique — they are what stops a stage being billed twice.`);
     }
 
+    const remainders = stages.filter((s) => s.remainder);
+    if (remainders.length > 1) {
+      warnings.push(
+        `The invoice stages for "${eventName}" have ${remainders.length} stages marked "remainder" (${remainders.map((s) => s.key).join(', ')}). ` +
+          'There is only one balance to bill, so only the first will be filled and the rest raise nothing.',
+      );
+    }
+
+    // A remainder stage takes whatever is left, so the total is 100% by
+    // construction and there is nothing to check.
+    if (remainders.length) {
+      const fixed = stages.filter((s) => !s.remainder).reduce((sum, s) => sum + (Number(s.percent) || 0), 0);
+      if (fixed >= 100) {
+        warnings.push(
+          `The invoice stages for "${eventName}" before the remainder already come to ${fixed}% of the contract, ` +
+            `so "${remainders[0].key}" would be $0 or negative and no invoice would be raised for it.`,
+        );
+      }
+      continue;
+    }
+
     // Only percentage stages can be summed; a fixed amount is deliberate.
     if (stages.some((s) => s.amount !== undefined && s.amount !== null)) continue;
     const total = stages.reduce((sum, s) => sum + (Number(s.percent) || 0), 0);
@@ -153,7 +174,7 @@ export function checkInvoiceStages(mapping) {
       warnings.push(
         `The invoice stages for "${eventName}" add up to ${total}% of the contract, not 100%. ` +
           `On a $10,000 contract the customer would be invoiced $${((total / 100) * 10000).toLocaleString('en-AU')} in total. ` +
-          'Adjust the "percent" values in config/mapping.json if that is not intended.',
+          'Either adjust the "percent" values in config/mapping.json, or mark the last stage "remainder": true so it takes the balance.',
       );
     }
   }

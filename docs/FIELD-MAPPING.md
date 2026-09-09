@@ -87,7 +87,7 @@ billed. Each stage becomes one GoHighLevel invoice:
       "name": "Deposit (10%) - {{project.reference_number}}",
       "description": "10% deposit on signing." },
     { "key": "pre_install",  "label": "Pre-installation", "percent": 60, "trigger": "manual", "dueDays": 7, "...": "..." },
-    { "key": "installation", "label": "Installation day", "percent": 10, "trigger": "manual", "dueDays": 0, "...": "..." }
+    { "key": "installation", "label": "Final payment", "remainder": true, "trigger": "manual", "dueDays": 0, "...": "..." }
   ]
 }
 ```
@@ -97,6 +97,7 @@ billed. Each stage becomes one GoHighLevel invoice:
 | `key` | how you refer to the stage in `POST /invoices/{key}`. Must be unique — it is what stops a stage being billed twice. |
 | `percent` | share of the contract total. Rounded to cents. |
 | `amount` | a fixed figure instead of a percentage. Wins over `percent`. |
+| `remainder` | `true` means "whatever is left of the contract after the other stages". Use this for a final balance rather than writing a percentage — it always adds up, and it survives odd totals that a percentage rounds badly. Only one stage may have it. |
 | `trigger` | `signed` raises it the moment the contract is signed. `manual` waits for `POST /invoices/{key}`. |
 | `dueDays` | days from the invoice being raised to its due date. `0` means due immediately. |
 | `name`, `description` | templates, same syntax as everywhere else. |
@@ -106,9 +107,12 @@ where bank-transfer details go when no payment provider is connected. A stage
 may override it with its own `termsNotes`.
 
 **The percentages are checked.** If the stages do not add up to 100% the bridge
-says so at startup and on `GET /health`, with the shortfall in dollars. It does
-not stop — a business may invoice part of a job elsewhere — but it will not
-happen quietly. Duplicate `key`s are reported the same way.
+says so at startup and on `GET /health`, with the shortfall in dollars. A
+`remainder` stage makes the total 100% by construction, so there is nothing to
+warn about — unless the stages before it already reach 100%, which would leave
+the balance at zero. Without a remainder, a total that is not 100% is reported
+but not enforced: a business may invoice part of a job elsewhere. Duplicate
+`key`s are reported the same way.
 
 To change the split, edit `percent` and restart (or `POST /mapping/reload`).
 

@@ -185,6 +185,17 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
       if (req.headers.version !== '2021-04-15') {
         return json(res, 400, { message: `invoices need Version 2021-04-15, got ${req.headers.version}` });
       }
+      // These two rejections are copied from what the LIVE API actually returned.
+      // A fake that accepts anything hides the bug by construction — both of
+      // these shipped green against a permissive stand-in.
+      const errors = [];
+      if (body?.businessDetails?.address !== undefined && typeof body.businessDetails.address !== 'object') {
+        errors.push('businessDetails.address.each value in nested property address must be either object or array');
+      }
+      for (const [i, item] of (body?.items ?? []).entries()) {
+        if (!item.currency) errors.push(`items.${i}.currency should not be empty`);
+      }
+      if (errors.length) return json(res, 422, { status: 422, message: 'Unprocessable Entity Exception', error: errors });
       return json(res, 200, { invoice: { _id: 'inv-1', ...body } });
     }
 

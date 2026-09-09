@@ -73,12 +73,12 @@
           },
           {
             "key": "installation",
-            "label": "Installation day",
-            "percent": 10,
+            "label": "Final payment",
             "trigger": "manual",
             "dueDays": 0,
-            "name": "Installation (10%) - {{project.reference_number}}",
-            "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}"
+            "name": "Final payment - {{project.reference_number}}",
+            "description": "Balance of the contract, payable on the day of installation. Pylon reference {{project.reference_number}}",
+            "remainder": true
           }
         ],
         "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: Inspire Energy<br>BSB: <em>your BSB</em><br>Account number: <em>your account number</em><br>Reference: {{project.reference_number}}</p><p>Please quote the reference above so we can match your payment.</p>"

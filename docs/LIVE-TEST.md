@@ -122,42 +122,53 @@ contact id and the *same* opportunity id — the second run updated rather than
 duplicated. Pylon retries a webhook up to five times over ~31 hours, so this
 matters.
 
-## Staged invoicing (added 9 September)
+## Staged invoicing — RAISED FOR REAL (9 September)
 
-The business bills 10% on signing, 60% before installation and 10% on the day,
-so one contract now produces three invoices instead of one.
+Three real invoices now exist in the live GoHighLevel account, created by the
+bridge, totalling exactly the contract:
 
-Verified live, and with the token as it stands today it did exactly what it
-should:
+| Stage | Amount | Raised by |
+| --- | --- | --- |
+| Deposit (10%) | $1,560.00 | the signature webhook, automatically |
+| Pre-installation (60%) | $9,360.00 | `POST /invoices/pre_install` |
+| Final payment (balance) | $4,680.00 | `POST /invoices/installation` |
+| **Total** | **$15,600.00** | = the contract, to the cent |
 
-> No invoice was raised for the "deposit" stage: the GoHighLevel token is missing
-> the "invoices.write" scope. Add it to the Private Integration and replay this
-> event. Everything else landed.
+Zero warnings on all three.
 
-Note it only attempted the **deposit** — the 60% and 10% stages are correctly not
-billed on the day of signing. And everything else in that same run still landed:
-opportunity value 15600, 18 fields, the PDF, the note, then the payment.
+### The third stage is a remainder, not 30%
 
-Add `invoices.write` and `locations.readonly` to the Private Integration and the
-invoices will raise for real.
+The business bills "10%, 60%, and the remaining amount", so the last stage is
+`"remainder": true` rather than a hardcoded 30%. It takes the contract total
+less whatever the earlier stages took. Two reasons that is better than 30%:
 
-Proven in the test suite against real HTTP stand-ins:
-- signing raises **only** the deposit, at $1,560 — 10% of $15,600
-- `POST /invoices/pre_install` raises $9,360, `POST /invoices/installation`
-  raises $1,560
-- calling either twice does **not** bill twice; nor does a redelivered signature
-- a later stage needs **no Pylon call** — the contract total is remembered
-- the endpoint refuses a customer with no signed contract on record, and
-  requires the admin token
+- the three invoices always add up to exactly the contract, whatever it is
+- odd totals still balance. On $10,000.05 a fixed 30% leaves a cent stranded;
+  the remainder does not.
 
-### The 80% question
+Checked against $15,600, $10,000.05, $23,333.33, $7,000 and $0.03 — every one
+sums to the contract exactly.
 
-10 + 60 + 10 = 80. The bridge reports this rather than silently under-billing:
+If the earlier stages ever come to 100% or more, the balance would be zero or
+negative, so no invoice is raised and the event says why.
 
-> The invoice stages for "web_proposals.signed" add up to 80% of the contract,
-> not 100%. On a $10,000 contract the customer would be invoiced $8,000 in total.
+### Two bugs the live account found that the tests did not
 
-One number in `config/mapping.json` fixes it if the last stage should be 30%.
+The first live attempt came back `422 Unprocessable Entity`:
+
+```
+businessDetails.address.each value in nested property address must be either object or array
+items.0.currency should not be empty
+```
+
+Both were real:
+
+1. `businessDetails.address` must be an **object**, not a joined string.
+2. Every line item needs its **own** `currency`, not just the invoice.
+
+The test stand-in had accepted both happily, which is exactly how a bug ships
+green. It now rejects them the same way the live API does — reverting either fix
+fails six tests.
 
 ## Not yet proven
 

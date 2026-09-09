@@ -71,18 +71,10 @@ invoices rather than one:
 | --- | --- | --- | --- |
 | Deposit | `deposit` | 10% | automatically, on signature |
 | Pre-installation | `pre_install` | 60% | on demand |
-| Installation day | `installation` | 10% | on demand |
+| Final payment | `installation` | **the balance** | on demand |
 
-> **These add up to 80%, not 100%.** The bridge says so at startup and on
-> `GET /health`:
->
-> > The invoice stages for "web_proposals.signed" add up to 80% of the contract,
-> > not 100%. On a $10,000 contract the customer would be invoiced $8,000 in
-> > total.
->
-> If the last stage should be 30%, change `percent` in `config/mapping.json` and
-> the warning goes away. Nothing is enforced — a business may legitimately
-> invoice part of a job elsewhere — but it will not happen quietly.
+The last stage is `"remainder": true` rather than a percentage, so the three
+invoices always add up to exactly the contract however it rounds.
 
 Set `GHL_CREATE_INVOICE=true` to switch invoicing on. It is **off by default**:
 raising an invoice is a billing action, not a data sync.

@@ -126,6 +126,20 @@ if (signed.result?.contactId) {
   show('custom fields:', contact.customFields);
 }
 
+// ------------------------------------------------- the later payment stages
+// Only the deposit comes from Pylon. These two are what a GoHighLevel workflow
+// would call when the job reaches the right stage.
+for (const stageKey of ['pre_install', 'installation']) {
+  const response = await fetch(`${base}/invoices/${stageKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.adminToken}` },
+    body: JSON.stringify({ opportunityId: signed.result?.opportunityId }),
+  });
+  const body = await response.json();
+  console.log(`\nPOST /invoices/${stageKey}  ->  HTTP ${response.status}`);
+  console.log(`  ${JSON.stringify(body)}`);
+}
+
 // --------------------------------------------------------------- payment
 const paymentId = await deliver('event-live-test-payment.json');
 const payment = bridge.store.get(paymentId);

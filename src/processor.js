@@ -411,6 +411,9 @@ export class Processor {
 
     const business = await this.invoiceBusinessDetails();
     const raised = [];
+    // Computed across ALL stages, not just the ones being raised now — the
+    // remainder stage needs to know what the others took.
+    const amounts = stageAmounts(section.stages, contractTotal);
 
     for (const stage of wanted) {
       const already = this.store?.lookupProject(payload.project.id)?.invoices?.[stage.key];
@@ -422,16 +425,24 @@ export class Processor {
         continue;
       }
 
-      const amount = stageAmount(stage, contractTotal);
-      if (amount === null) {
-        warnings.push(`Payment stage "${stage.key}" has neither a percent nor an amount, so no invoice was raised for it.`);
+      const amount = amounts.get(stage.key);
+      if (amount === null || amount === undefined) {
+        warnings.push(`Payment stage "${stage.key}" has no percent, amount or remainder, so no invoice was raised for it.`);
+        continue;
+      }
+      if (amount <= 0) {
+        warnings.push(
+          `Payment stage "${stage.key}" worked out to ${amount}, so no invoice was raised. ` +
+            'Check the percentages in config/mapping.json — the earlier stages may already cover the whole contract.',
+        );
         continue;
       }
 
       const issueDate = toIsoDate(new Date().toISOString());
+      const currency = render(section.currency, payload) || payload.contract.currency || 'AUD';
       const invoiceBody = {
         name: render(stage.name, payload) || `${stage.label ?? stage.key} - ${payload.project.reference_number ?? ''}`.trim(),
-        currency: render(section.currency, payload) || payload.contract.currency || 'AUD',
+        currency,
         businessDetails: business,
         contactDetails: {
           id: contactId,
@@ -445,6 +456,9 @@ export class Processor {
             description: render(stage.description, payload) || '',
             amount,
             qty: 1,
+            // Required per line item as well as on the invoice; omitting it is
+            // rejected with "items.0.currency should not be empty".
+            currency,
           },
         ],
         discount: { type: 'percentage', value: 0 },
@@ -511,7 +525,15 @@ export class Processor {
       const location = await this.ghl.getLocation();
       return {
         name: location?.name ?? '',
-        address: [location?.address, location?.city, location?.state, location?.postalCode].filter(Boolean).join(', '),
+        // MUST be an object. A joined string is rejected with
+        // "each value in nested property address must be either object or array".
+        address: {
+          addressLine1: location?.address ?? '',
+          city: location?.city ?? '',
+          state: location?.state ?? '',
+          countryCode: location?.country ?? '',
+          postalCode: location?.postalCode ?? '',
+        },
         phoneNo: location?.phone ?? '',
         website: location?.website ?? '',
         logoUrl: location?.logoUrl || undefined,
@@ -835,14 +857,44 @@ function addDays(isoDate, days) {
 }
 
 /**
- * A stage's amount: an explicit `amount` wins, otherwise `percent` of the
- * contract total. Rounded to cents so the stages add up to what was quoted.
+ * Works out what every payment stage is worth, as a Map of key -> amount.
+ *
+ * A stage is one of three things:
+ *   amount:    a fixed figure
+ *   percent:   that share of the contract total
+ *   remainder: whatever is left after all the others
+ *
+ * The remainder exists because the business bills "10%, 60%, and the remaining
+ * amount". Taking it literally rather than writing 30% means the three invoices
+ * always add up to exactly the contract, whatever the contract is and however
+ * the percentages round.
  */
-function stageAmount(stage, contractTotal) {
-  if (stage.amount !== undefined && stage.amount !== null) {
-    return toNumber(stage.amount);
+export function stageAmounts(stages = [], contractTotal) {
+  const amounts = new Map();
+  const remainderStages = [];
+
+  for (const stage of stages) {
+    if (stage.remainder) {
+      remainderStages.push(stage);
+      continue;
+    }
+    if (stage.amount !== undefined && stage.amount !== null) {
+      amounts.set(stage.key, toNumber(stage.amount));
+      continue;
+    }
+    const percent = toNumber(stage.percent);
+    amounts.set(stage.key, percent === null ? null : Math.round(contractTotal * percent) / 100);
   }
-  const percent = toNumber(stage.percent);
-  if (percent === null) return null;
-  return Math.round(contractTotal * percent) / 100;
+
+  if (remainderStages.length) {
+    const spoken = [...amounts.values()].reduce((sum, value) => sum + (value ?? 0), 0);
+    // Rounded to cents; without this, floating point leaves 4679.999999999999.
+    const left = Math.round((contractTotal - spoken) * 100) / 100;
+    // More than one remainder cannot be divided sensibly, so only the first is
+    // filled and the rest are reported by checkInvoiceStages().
+    amounts.set(remainderStages[0].key, left);
+    for (const extra of remainderStages.slice(1)) amounts.set(extra.key, null);
+  }
+
+  return amounts;
 }

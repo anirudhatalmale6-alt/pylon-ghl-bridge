@@ -646,13 +646,87 @@ test('the later stages are raised on demand, each for its own share', async (t) 
   assert.equal(pre.json.invoices[0].amount, 9360, '60% of $15,600');
 
   const install = await call('installation');
-  assert.equal(install.json.invoices[0].amount, 1560, '10% of $15,600');
+  assert.equal(install.json.invoices[0].amount, 4680, 'the balance: $15,600 less the 10% and the 60%');
 
   assert.equal(h.ghl.findAll('POST', '/invoices/').length, 3, 'three invoices for one contract');
 
-  // The three stages bill 80% of the contract — the mapping says so out loud.
+  // The whole point of a remainder stage: the three invoices come to exactly
+  // the contract, so nothing is ever left unbilled.
   const bodies = h.ghl.findAll('POST', '/invoices/').map((c) => c.body.items[0].amount);
-  assert.equal(bodies.reduce((a, b) => a + b, 0), 12480);
+  assert.equal(bodies.reduce((a, b) => a + b, 0), 15600);
+});
+
+test('the final invoice is the balance, whatever the contract total is', async (t) => {
+  const { stageAmounts } = await import('../src/processor.js');
+  const stages = [
+    { key: 'deposit', percent: 10 },
+    { key: 'pre_install', percent: 60 },
+    { key: 'final', remainder: true },
+  ];
+
+  // Awkward totals are the point — 30% of these does NOT come out clean.
+  for (const total of [15600, 10000.05, 23333.33, 7000, 0.03]) {
+    const amounts = stageAmounts(stages, total);
+    const summed = [...amounts.values()].reduce((a, b) => a + b, 0);
+    assert.equal(
+      Math.round(summed * 100) / 100,
+      total,
+      `stages must add up to exactly ${total}, got ${summed}`,
+    );
+  }
+
+  // A fixed 30% would leave a cent behind on this one; the remainder does not.
+  const rounded = stageAmounts(stages, 10000.05);
+  assert.equal(rounded.get('final'), 3000.01);
+  assert.notEqual(rounded.get('final'), Math.round(10000.05 * 30) / 100);
+});
+
+test('a remainder that would be zero or negative raises nothing', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  const stages = h.bridge.processor.mapping.events['web_proposals.signed'].invoices.stages;
+  stages.find((s) => s.key === 'deposit').percent = 100;
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const opportunityId = h.bridge.store.get('oKcdQEqKvq962di').result.opportunityId;
+
+  const response = await fetch(`${h.bridge.base}/invoices/installation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+    body: JSON.stringify({ opportunityId }),
+  });
+  const body = await response.json();
+
+  assert.deepEqual(body.invoices, [], 'no invoice for a balance of zero or less');
+  assert.match(body.warnings.join(' '), /worked out to/);
+  assert.match(body.warnings.join(' '), /already cover the whole contract/);
+});
+
+test('the percentage check understands a remainder stage', async (t) => {
+  const { checkInvoiceStages } = await import('../src/mapping.js');
+
+  const withRemainder = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [
+      { key: 'a', percent: 10 }, { key: 'b', percent: 60 }, { key: 'c', remainder: true },
+    ] } } },
+  });
+  assert.deepEqual(withRemainder, [], '10 + 60 + the balance is 100% by construction, so nothing to warn about');
+
+  const overCommitted = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [
+      { key: 'a', percent: 70 }, { key: 'b', percent: 40 }, { key: 'c', remainder: true },
+    ] } } },
+  });
+  assert.match(overCommitted[0], /already come to 110%/);
+
+  const twoRemainders = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [
+      { key: 'a', percent: 10 }, { key: 'b', remainder: true }, { key: 'c', remainder: true },
+    ] } } },
+  });
+  assert.match(twoRemainders[0], /only one balance to bill/);
 });
 
 test('the contract total is remembered, so a later stage needs no Pylon call', async (t) => {
