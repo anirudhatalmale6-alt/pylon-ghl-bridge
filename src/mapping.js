@@ -124,7 +124,40 @@ export function loadMapping(file) {
       system: 'bridge',
     });
   }
+  parsed.warnings = checkInvoiceStages(parsed);
   return parsed;
+}
+
+/**
+ * Payment stages that do not add up to the contract are a real problem — the
+ * customer gets billed for less (or more) than they signed for, and nothing
+ * else in the system would ever notice. Reported, not enforced: a business may
+ * genuinely invoice part of a job here and the rest elsewhere.
+ */
+export function checkInvoiceStages(mapping) {
+  const warnings = [];
+  for (const [eventName, event] of Object.entries(mapping.events ?? {})) {
+    const stages = event?.invoices?.stages;
+    if (!stages?.length) continue;
+
+    const keys = stages.map((s) => s.key);
+    const duplicates = keys.filter((k, i) => keys.indexOf(k) !== i);
+    if (duplicates.length) {
+      warnings.push(`Invoice stages for "${eventName}" reuse the key(s) ${[...new Set(duplicates)].join(', ')}. Keys must be unique — they are what stops a stage being billed twice.`);
+    }
+
+    // Only percentage stages can be summed; a fixed amount is deliberate.
+    if (stages.some((s) => s.amount !== undefined && s.amount !== null)) continue;
+    const total = stages.reduce((sum, s) => sum + (Number(s.percent) || 0), 0);
+    if (Math.abs(total - 100) > 0.001) {
+      warnings.push(
+        `The invoice stages for "${eventName}" add up to ${total}% of the contract, not 100%. ` +
+          `On a $10,000 contract the customer would be invoiced $${((total / 100) * 10000).toLocaleString('en-AU')} in total. ` +
+          'Adjust the "percent" values in config/mapping.json if that is not intended.',
+      );
+    }
+  }
+  return warnings;
 }
 
 /**

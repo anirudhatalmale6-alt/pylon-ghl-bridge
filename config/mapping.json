@@ -51,15 +51,35 @@
         }
       },
 
-      "invoice": {
-      "name": "{{contract.name}} - {{project.reference_number}}",
+      "invoices": {
       "currency": "{{contract.currency || 'AUD'}}",
-      "items": [
+      "stages": [
         {
-          "name": "{{contract.name}}",
-          "description": "{{contract.description || contract.title}} — Pylon reference {{project.reference_number}}",
-          "amount": "{{contract.total_amount}}",
-          "qty": 1
+          "key": "deposit",
+          "label": "Deposit",
+          "percent": 10,
+          "trigger": "signed",
+          "dueDays": 7,
+          "name": "Deposit (10%) - {{project.reference_number}}",
+          "description": "10% deposit on signing. {{contract.description || contract.title}} — Pylon reference {{project.reference_number}}"
+        },
+        {
+          "key": "pre_install",
+          "label": "Pre-installation",
+          "percent": 60,
+          "trigger": "manual",
+          "dueDays": 7,
+          "name": "Pre-installation (60%) - {{project.reference_number}}",
+          "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}"
+        },
+        {
+          "key": "installation",
+          "label": "Installation day",
+          "percent": 10,
+          "trigger": "manual",
+          "dueDays": 0,
+          "name": "Installation (10%) - {{project.reference_number}}",
+          "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}"
         }
       ]
     },

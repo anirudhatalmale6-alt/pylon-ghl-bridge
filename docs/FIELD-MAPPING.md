@@ -74,28 +74,39 @@ Run `npm run discover` to print all three for every field in your account.
    1 the CRM field is left unchanged and rule 2 puts a warning on the event.
    See [SETUP.md](SETUP.md#running-before-that-happens--webhook-only-mode).
 
-### The invoice
+### The payment stages
 
-The `invoice` section of a signed-event mapping controls what GoHighLevel
-invoices, when `GHL_CREATE_INVOICE=true`:
+The `invoices` section of a signed-event mapping defines how a contract is
+billed. Each stage becomes one GoHighLevel invoice:
 
 ```json
-"invoice": {
-  "name": "{{contract.name}} - {{project.reference_number}}",
+"invoices": {
   "currency": "{{contract.currency || 'AUD'}}",
-  "items": [
-    { "name": "{{contract.name}}",
-      "description": "{{contract.description || contract.title}}",
-      "amount": "{{contract.total_amount}}",
-      "qty": 1 }
+  "stages": [
+    { "key": "deposit",      "label": "Deposit",          "percent": 10, "trigger": "signed", "dueDays": 7,
+      "name": "Deposit (10%) - {{project.reference_number}}",
+      "description": "10% deposit on signing." },
+    { "key": "pre_install",  "label": "Pre-installation", "percent": 60, "trigger": "manual", "dueDays": 7, "...": "..." },
+    { "key": "installation", "label": "Installation day", "percent": 10, "trigger": "manual", "dueDays": 0, "...": "..." }
   ]
 }
 ```
 
-`amount` is in dollars, not cents. To invoice a **deposit** instead of the full
-contract, point it at a deposit figure — or add a second line item and split it.
-A line item whose `amount` does not resolve to a number is dropped; if none
-resolve, no invoice is raised and the event says so.
+| Field | Meaning |
+| --- | --- |
+| `key` | how you refer to the stage in `POST /invoices/{key}`. Must be unique — it is what stops a stage being billed twice. |
+| `percent` | share of the contract total. Rounded to cents. |
+| `amount` | a fixed figure instead of a percentage. Wins over `percent`. |
+| `trigger` | `signed` raises it the moment the contract is signed. `manual` waits for `POST /invoices/{key}`. |
+| `dueDays` | days from the invoice being raised to its due date. `0` means due immediately. |
+| `name`, `description` | templates, same syntax as everywhere else. |
+
+**The percentages are checked.** If the stages do not add up to 100% the bridge
+says so at startup and on `GET /health`, with the shortfall in dollars. It does
+not stop — a business may invoice part of a job elsewhere — but it will not
+happen quietly. Duplicate `key`s are reported the same way.
+
+To change the split, edit `percent` and restart (or `POST /mapping/reload`).
 
 The business name, address, phone and website come from your GoHighLevel
 location, not from this file.

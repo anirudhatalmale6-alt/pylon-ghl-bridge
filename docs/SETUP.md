@@ -62,40 +62,79 @@ Copy the token into `GHL_API_TOKEN`.
 Then **Settings → Business Profile** and copy the **Location ID** (the
 sub-account id, not the agency id) into `GHL_LOCATION_ID`.
 
-### Invoices (optional)
+### Invoices — the three payment stages (optional)
 
-Set `GHL_CREATE_INVOICE=true` and a GoHighLevel invoice is raised for the
-contract value the moment a contract is signed. It is **off by default** —
+The business bills in three stages, so one signed contract produces three
+invoices rather than one:
+
+| Stage | Key | Share | Raised |
+| --- | --- | --- | --- |
+| Deposit | `deposit` | 10% | automatically, on signature |
+| Pre-installation | `pre_install` | 60% | on demand |
+| Installation day | `installation` | 10% | on demand |
+
+> **These add up to 80%, not 100%.** The bridge says so at startup and on
+> `GET /health`:
+>
+> > The invoice stages for "web_proposals.signed" add up to 80% of the contract,
+> > not 100%. On a $10,000 contract the customer would be invoiced $8,000 in
+> > total.
+>
+> If the last stage should be 30%, change `percent` in `config/mapping.json` and
+> the warning goes away. Nothing is enforced — a business may legitimately
+> invoice part of a job elsewhere — but it will not happen quietly.
+
+Set `GHL_CREATE_INVOICE=true` to switch invoicing on. It is **off by default**:
 raising an invoice is a billing action, not a data sync.
+
+#### Raising the later two stages
+
+Only the deposit can come from Pylon — Pylon has no idea when you are about to
+install. The other two are raised by calling the bridge:
+
+```
+POST https://your-server/invoices/pre_install
+Authorization: Bearer <ADMIN_TOKEN>
+Content-Type: application/json
+
+{ "opportunityId": "the GoHighLevel opportunity id" }
+```
+
+`contactId` or `reference` (the Pylon reference number) work in place of
+`opportunityId`. Use `installation` for the last stage.
+
+The tidy way to drive this is a **GoHighLevel workflow**: trigger on the
+opportunity entering "60% Deposit Required", action = Webhook, POST to that URL
+with the admin token as an `Authorization` header. Then nobody has to remember.
+
+Calling it twice is safe — a stage that has already been invoiced returns the
+invoice that exists rather than billing the customer again.
+
+#### Scopes
 
 `invoices.write` is **not** included in a Private Integration by default. Without
 it the invoice step fails with:
 
-> No invoice was raised: the GoHighLevel token is missing the "invoices.write"
-> scope. Add it to the Private Integration and replay this event. Everything
-> else landed.
+> No invoice was raised for the "deposit" stage: the GoHighLevel token is missing
+> the "invoices.write" scope. Add it to the Private Integration and replay this
+> event. Everything else landed.
 
-Everything else still lands — the signature never fails because of an invoice.
+Everything else still lands — a signature never fails because of an invoice.
+
+#### Settings
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `GHL_CREATE_INVOICE` | `false` | raise an invoice on signature |
-| `GHL_INVOICE_SEND_ACTION` | `none` | `none` leaves it as a draft. `send_manually` marks it sent without contacting the customer. `email`, `sms`, `sms_and_email` actually contact them. |
-| `GHL_INVOICE_DUE_DAYS` | `7` | days from the signature date to the due date |
-| `GHL_INVOICE_LIVE_MODE` | `true` | set `false` for GoHighLevel test-mode invoices |
-| `GHL_INVOICE_USER_ID` | — | who the send is recorded under; avoids needing `users.readonly` |
+| `GHL_CREATE_INVOICE` | `false` | raise invoices at all |
+| `GHL_INVOICE_SEND_ACTION` | `none` | `none` leaves a draft. `send_manually` marks it sent without contacting the customer. `email`, `sms`, `sms_and_email` actually contact them. |
+| `GHL_INVOICE_DUE_DAYS` | `7` | fallback when a stage has no `dueDays` |
+| `GHL_INVOICE_LIVE_MODE` | `true` | `false` for GoHighLevel test-mode invoices |
+| `GHL_INVOICE_USER_ID` | — | who a send is recorded under; avoids needing `users.readonly` |
 
-What goes on the invoice is set in the `invoice` section of
-`config/mapping.json` — see [FIELD-MAPPING.md](FIELD-MAPPING.md). By default it
-is one line item for the full contract value. To invoice the deposit instead,
-change that one line to `{{contract.deposit_amount_formatted}}`'s underlying
-number, or add a second line item.
-
-Business details (your name, address, phone, website) are read from your
-GoHighLevel location automatically, so there is nothing to type in.
-
-> An invoice is only ever raised once per Pylon project. Pylon retries a webhook
-> up to five times, and a duplicate billing document is not acceptable.
+Percentages, names, wording and due dates all live in the `invoices` section of
+`config/mapping.json` — see [FIELD-MAPPING.md](FIELD-MAPPING.md). Your business
+name, address, phone and website are read from your GoHighLevel location, so
+there is nothing to type in.
 
 ## 3. GoHighLevel — pipeline and stage
 

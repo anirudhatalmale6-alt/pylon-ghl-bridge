@@ -6,7 +6,7 @@ import { PylonClient, verifyWebhookSignature } from './pylon.js';
 import { GhlClient } from './ghl.js';
 import { EventStore } from './store.js';
 import { RetryQueue } from './queue.js';
-import { Processor } from './processor.js';
+import { Processor, SIGNED_EVENT } from './processor.js';
 import { createNotifier, buildSummary } from './callback.js';
 import { loadMapping } from './mapping.js';
 
@@ -33,6 +33,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const notify = createNotifier(config.callback);
 
   for (const warning of configWarnings(config)) logger.warn(warning);
+  for (const warning of mapping.warnings ?? []) logger.warn(warning);
 
   const queue = new RetryQueue({
     store,
@@ -113,7 +114,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
       uptimeSeconds: Math.round(process.uptime()),
       dryRun: config.dryRun,
       mode: enrichmentEnabled(config) ? 'full' : 'webhook-only',
-      warnings: configWarnings(config),
+      warnings: [...configWarnings(config), ...(processor.mapping.warnings ?? [])],
       events: store.stats(),
     };
 
@@ -162,6 +163,76 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     store.update(record.id, { status: 'received', attempts: 0, error: null, nextAttemptAt: null });
     queue.enqueue(record.id);
     res.status(202).json({ ok: true, eventId: record.id, status: 'requeued' });
+  });
+
+  // ------------------------------------------------------------ invoices
+
+  /**
+   * Raises the invoice for one payment stage on demand.
+   *
+   *   POST /invoices/pre_install
+   *   { "opportunityId": "..." }      or { "contactId": ... } or { "reference": ... }
+   *
+   * This exists because only the deposit is triggered by Pylon — "before
+   * installation" and "on the day" are decisions the business makes in the CRM.
+   * Point a GoHighLevel workflow at this when the opportunity reaches the right
+   * stage (Settings → Workflows → Webhook, with the admin token as a header).
+   *
+   * Safe to call twice: a stage already invoiced returns the existing invoice
+   * rather than billing the customer again.
+   */
+  app.post('/invoices/:stageKey', requireAdmin(config), express.json({ limit: '256kb' }), async (req, res) => {
+    const { stageKey } = req.params;
+    const { projectId, opportunityId, contactId, reference } = req.body ?? {};
+
+    if (!projectId && !opportunityId && !contactId && !reference) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Send one of projectId, opportunityId, contactId or reference so the contract can be identified.',
+      });
+    }
+
+    const found = store.findLinkBy({ projectId: projectId || reference, opportunityId, contactId });
+    if (!found) {
+      return res.status(404).json({
+        ok: false,
+        error:
+          'No signed contract is on record for that customer, so there is nothing to invoice against. ' +
+          'The contract has to have come through this bridge first.',
+      });
+    }
+
+    const mapping = processor.mapping.events[SIGNED_EVENT];
+    const stage = mapping?.invoices?.stages?.find((s) => s.key === stageKey);
+    if (!stage) {
+      const available = (mapping?.invoices?.stages ?? []).map((s) => s.key).join(', ') || '(none configured)';
+      return res.status(404).json({ ok: false, error: `No payment stage called "${stageKey}". Configured stages: ${available}.` });
+    }
+
+    // Rebuild just enough of the signed payload for the invoice from what was
+    // stored when the contract came through — no Pylon call needed.
+    const { projectId: linkedProjectId, link } = found;
+    const payload = {
+      project: { id: linkedProjectId, reference_number: link.reference ?? linkedProjectId },
+      client: { name: link.contactName ?? '', email: link.contactEmail ?? '', phone: link.contactPhone ?? '' },
+      contract: { total_amount: link.contractTotal ?? null, currency: link.currency ?? '', title: '', description: '' },
+    };
+
+    const warnings = [];
+    try {
+      const raised = await processor.raiseInvoices({
+        mapping,
+        payload,
+        contactId: link.contactId,
+        warnings,
+        only: stageKey,
+      });
+      const ok = raised.length > 0 && warnings.length === 0;
+      return res.status(ok ? 200 : 200).json({ ok, stage: stageKey, invoices: raised, warnings });
+    } catch (error) {
+      logger.error('manual invoice failed', { error, stageKey });
+      return res.status(502).json({ ok: false, error: error.message });
+    }
   });
 
   // ------------------------------------------------------------- mapping

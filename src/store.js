@@ -52,6 +52,32 @@ export class EventStore {
     return this.links.get(pylonProjectId) ?? null;
   }
 
+  /**
+   * Records that one payment stage has been invoiced. Kept separate from
+   * linkProject because that one shallow-merges — writing the whole `invoices`
+   * object through it would drop the stages already raised.
+   */
+  recordInvoice(pylonProjectId, stageKey, details) {
+    if (!pylonProjectId || !stageKey) return;
+    const link = this.links.get(pylonProjectId) ?? {};
+    link.invoices = { ...(link.invoices ?? {}), [stageKey]: { ...details, at: new Date().toISOString() } };
+    link.updatedAt = new Date().toISOString();
+    this.links.set(pylonProjectId, link);
+    this._persist();
+  }
+
+  /** Finds the project link for a GoHighLevel contact or opportunity id. */
+  findLinkBy({ projectId, opportunityId, contactId } = {}) {
+    if (projectId && this.links.has(projectId)) {
+      return { projectId, link: this.links.get(projectId) };
+    }
+    for (const [id, link] of this.links) {
+      if (opportunityId && link.opportunityId === opportunityId) return { projectId: id, link };
+      if (contactId && link.contactId === contactId) return { projectId: id, link };
+    }
+    return null;
+  }
+
   _persist() {
     const records = [...this.state.values()];
     const cutoff = Date.now() - this.retentionDays * 86400000;

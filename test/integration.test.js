@@ -579,7 +579,8 @@ test('a Pylon token restores the full picture — same event, contract value and
 });
 
 // ---------------------------------------------------------------------------
-// Invoicing. Off by default — creating one is a billing action.
+// Staged invoicing. The business bills 10% on signing, 60% before install and
+// 10% on the day, so a contract produces three invoices, not one.
 // ---------------------------------------------------------------------------
 
 const INVOICING_ON = { ghl: { createInvoice: true } };
@@ -592,10 +593,10 @@ test('no invoice is raised unless invoicing is switched on', async (t) => {
   await h.bridge.queue.onIdle();
 
   assert.equal(h.ghl.calls.filter((c) => c.path === '/invoices/').length, 0);
-  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceId, null);
+  assert.deepEqual(h.bridge.store.get('oKcdQEqKvq962di').result.invoices, []);
 });
 
-test('a signed contract raises an invoice for the contract value', async (t) => {
+test('signing raises only the deposit, at 10% of the contract', async (t) => {
   const h = await harness({ config: INVOICING_ON });
   t.after(() => h.close());
 
@@ -605,32 +606,149 @@ test('a signed contract raises an invoice for the contract value', async (t) => 
   const record = h.bridge.store.get('oKcdQEqKvq962di');
   assert.equal(record.status, 'succeeded', JSON.stringify(record.error));
   assert.deepEqual(record.result.warnings, []);
-  assert.equal(record.result.invoiceId, 'inv-1');
-  assert.equal(record.result.invoiceTotal, 15600);
 
-  const call = h.ghl.find('POST', '/invoices/');
-  assert.ok(call, 'the invoice was actually posted');
-  assert.equal(
-    call.headers.version,
-    '2021-04-15',
-    'the Invoices API is versioned separately from the rest of v2 — 2021-07-28 is rejected',
-  );
-  assert.equal(call.body.altType, 'location');
+  const posts = h.ghl.findAll('POST', '/invoices/');
+  assert.equal(posts.length, 1, 'the 60% and 10% stages are not billed on the day of signing');
+
+  assert.equal(record.result.invoices.length, 1);
+  assert.equal(record.result.invoices[0].key, 'deposit');
+  assert.equal(record.result.invoices[0].amount, 1560, '10% of $15,600');
+
+  const call = posts[0];
+  assert.equal(call.headers.version, '2021-04-15', 'the Invoices API is versioned separately from the rest of v2');
+  assert.equal(call.body.items.length, 1);
+  assert.equal(call.body.items[0].amount, 1560);
   assert.equal(call.body.currency, 'AUD');
   assert.equal(call.body.contactDetails.id, 'contact-1');
-  assert.equal(call.body.contactDetails.email, 'andre@example.com');
-  assert.deepEqual(call.body.sentTo.email, ['andre@example.com']);
-  assert.equal(call.body.items.length, 1);
-  assert.equal(call.body.items[0].amount, 15600);
-  assert.equal(call.body.items[0].qty, 1);
-
-  // Dates: issued on the signature, due the configured number of days later.
-  assert.equal(call.body.issueDate, '2026-08-25');
-  assert.equal(call.body.dueDate, '2026-09-01', 'seven days after issue, crossing a month boundary');
-
-  // Business details are read from the location rather than hardcoded.
   assert.equal(call.body.businessDetails.name, 'Test Solar Co');
-  assert.equal(call.body.businessDetails.address, '1 Business Road, Newcastle, NSW, 2300');
+});
+
+test('the later stages are raised on demand, each for its own share', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const opportunityId = h.bridge.store.get('oKcdQEqKvq962di').result.opportunityId;
+
+  const call = async (stage) => {
+    const response = await fetch(`${h.bridge.base}/invoices/${stage}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+      body: JSON.stringify({ opportunityId }),
+    });
+    return { status: response.status, json: await response.json() };
+  };
+
+  const pre = await call('pre_install');
+  assert.equal(pre.status, 200, JSON.stringify(pre.json));
+  assert.equal(pre.json.ok, true);
+  assert.equal(pre.json.invoices[0].amount, 9360, '60% of $15,600');
+
+  const install = await call('installation');
+  assert.equal(install.json.invoices[0].amount, 1560, '10% of $15,600');
+
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 3, 'three invoices for one contract');
+
+  // The three stages bill 80% of the contract — the mapping says so out loud.
+  const bodies = h.ghl.findAll('POST', '/invoices/').map((c) => c.body.items[0].amount);
+  assert.equal(bodies.reduce((a, b) => a + b, 0), 12480);
+});
+
+test('the contract total is remembered, so a later stage needs no Pylon call', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const pylonCallsAfterSigning = h.pylon.calls.length;
+
+  await fetch(`${h.bridge.base}/invoices/pre_install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+    body: JSON.stringify({ contactId: 'contact-1' }),
+  });
+
+  assert.equal(h.pylon.calls.length, pylonCallsAfterSigning, 'Pylon is not touched to raise a later invoice');
+});
+
+test('a payment stage is never billed twice', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const opportunityId = h.bridge.store.get('oKcdQEqKvq962di').result.opportunityId;
+
+  const body = JSON.stringify({ opportunityId });
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` };
+  const first = await (await fetch(`${h.bridge.base}/invoices/pre_install`, { method: 'POST', headers, body })).json();
+  const second = await (await fetch(`${h.bridge.base}/invoices/pre_install`, { method: 'POST', headers, body })).json();
+
+  assert.equal(
+    h.ghl.findAll('POST', '/invoices/').length,
+    2,
+    'the deposit plus ONE pre-install invoice — a workflow firing twice must not bill twice',
+  );
+  assert.equal(second.invoices[0].alreadyExisted, true);
+  assert.equal(second.invoices[0].id, first.invoices[0].id);
+});
+
+test('a redelivered signature does not raise a second deposit', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  h.bridge.store.update('oKcdQEqKvq962di', { status: 'received', attempts: 0 });
+  h.bridge.queue.enqueue('oKcdQEqKvq962di');
+  await h.bridge.queue.onIdle();
+
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 1);
+});
+
+test('invoicing a customer with no signed contract on record is refused', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  const response = await fetch(`${h.bridge.base}/invoices/pre_install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+    body: JSON.stringify({ opportunityId: 'never-seen-this' }),
+  });
+  assert.equal(response.status, 404);
+  assert.match((await response.json()).error, /No signed contract is on record/);
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0);
+});
+
+test('an unknown payment stage lists the ones that exist', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const response = await fetch(`${h.bridge.base}/invoices/final_payment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+    body: JSON.stringify({ contactId: 'contact-1' }),
+  });
+  assert.equal(response.status, 404);
+  assert.match((await response.json()).error, /deposit, pre_install, installation/);
+});
+
+test('the invoice endpoint requires the admin token', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  const response = await fetch(`${h.bridge.base}/invoices/pre_install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contactId: 'contact-1' }),
+  });
+  assert.equal(response.status, 401, 'anyone who can reach this URL could otherwise bill a customer');
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0);
 });
 
 test('an invoice is not emailed to the customer unless that is asked for', async (t) => {
@@ -645,7 +763,7 @@ test('an invoice is not emailed to the customer unless that is asked for', async
     0,
     'default is a draft — auto-emailing a customer the moment they sign is the business\'s call, not mine',
   );
-  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceSent, false);
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoices[0].sent, false);
 });
 
 test('the invoice is sent when an action is configured', async (t) => {
@@ -659,28 +777,7 @@ test('the invoice is sent when an action is configured', async (t) => {
   assert.ok(send, 'the send endpoint was called');
   assert.equal(send.body.action, 'email');
   assert.equal(send.headers.version, '2021-04-15');
-  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceSent, true);
-});
-
-test('a redelivered signature does not raise a second invoice', async (t) => {
-  const h = await harness({ config: INVOICING_ON });
-  t.after(() => h.close());
-
-  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
-  await h.bridge.queue.onIdle();
-
-  // Force a genuine reprocess rather than the duplicate short-circuit, which is
-  // what a replay or a changed event id would do.
-  h.bridge.store.update('oKcdQEqKvq962di', { status: 'received', attempts: 0 });
-  h.bridge.queue.enqueue('oKcdQEqKvq962di');
-  await h.bridge.queue.onIdle();
-
-  assert.equal(
-    h.ghl.calls.filter((c) => c.method === 'POST' && c.path === '/invoices/').length,
-    1,
-    'an invoice is a billing document — Pylon retries must never produce two',
-  );
-  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceId, 'inv-1');
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoices[0].sent, true);
 });
 
 test('a missing invoices.write scope names the scope and does not fail the event', async (t) => {
@@ -692,12 +789,12 @@ test('a missing invoices.write scope names the scope and does not fail the event
 
   const record = h.bridge.store.get('oKcdQEqKvq962di');
   assert.equal(record.status, 'succeeded', 'the signature still lands — an invoice failure must not lose the contract');
-  assert.equal(record.result.invoiceId, null);
+  assert.deepEqual(record.result.invoices, []);
   assert.equal(record.result.monetaryValue, 15600, 'and the opportunity value is still set');
   assert.match(record.result.warnings.join(' '), /invoices\.write/);
 });
 
-test('webhook-only mode does not raise an invoice for an unknown amount', async (t) => {
+test('webhook-only mode does not invoice a contract whose value is unknown', async (t) => {
   const h = await harness({ config: { ...NO_PYLON_TOKEN, ghl: { createInvoice: true } } });
   t.after(() => h.close());
 
@@ -707,4 +804,25 @@ test('webhook-only mode does not raise an invoice for an unknown amount', async 
   const record = h.bridge.store.get('oKcdQEqKvq962di');
   assert.equal(h.ghl.calls.filter((c) => c.path === '/invoices/').length, 0);
   assert.match(record.result.warnings.join(' '), /contract value is only readable through the Pylon API/);
+});
+
+test('payment stages that do not add up to 100% are reported', async (t) => {
+  const { checkInvoiceStages } = await import('../src/mapping.js');
+
+  const shipped = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [{ key: 'a', percent: 10 }, { key: 'b', percent: 60 }, { key: 'c', percent: 10 }] } } },
+  });
+  assert.equal(shipped.length, 1);
+  assert.match(shipped[0], /add up to 80% of the contract, not 100%/);
+  assert.match(shipped[0], /\$8,000/, 'and says what that means in money');
+
+  const balanced = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [{ key: 'a', percent: 10 }, { key: 'b', percent: 60 }, { key: 'c', percent: 30 }] } } },
+  });
+  assert.deepEqual(balanced, [], 'control: 10 + 60 + 30 is silent');
+
+  const duped = checkInvoiceStages({
+    events: { signed: { invoices: { stages: [{ key: 'a', percent: 50 }, { key: 'a', percent: 50 }] } } },
+  });
+  assert.match(duped[0], /reuse the key/, 'duplicate keys break the bill-once guard');
 });

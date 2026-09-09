@@ -122,29 +122,42 @@ contact id and the *same* opportunity id — the second run updated rather than
 duplicated. Pylon retries a webhook up to five times over ~31 hours, so this
 matters.
 
-## Invoicing (added 9 September)
+## Staged invoicing (added 9 September)
 
-`GHL_CREATE_INVOICE=true` raises a GoHighLevel invoice for the contract value on
-signature. Verified against the live account, and it did exactly what it is
-supposed to do with the token as it stands today:
+The business bills 10% on signing, 60% before installation and 10% on the day,
+so one contract now produces three invoices instead of one.
 
-> No invoice was raised: the GoHighLevel token is missing the "invoices.write"
-> scope. Add it to the Private Integration and replay this event. Everything
-> else landed.
+Verified live, and with the token as it stands today it did exactly what it
+should:
 
-And everything else *did* land in the same run — opportunity value 15600, 18
-fields, the PDF, the note, then the payment. An invoice problem never costs you
-the contract.
+> No invoice was raised for the "deposit" stage: the GoHighLevel token is missing
+> the "invoices.write" scope. Add it to the Private Integration and replay this
+> event. Everything else landed.
 
-Add `invoices.write` (and `locations.readonly`, for the business details on the
-invoice) to the Private Integration and it will raise properly.
+Note it only attempted the **deposit** — the 60% and 10% stages are correctly not
+billed on the day of signing. And everything else in that same run still landed:
+opportunity value 15600, 18 fields, the PDF, the note, then the payment.
 
-Defaults, all changeable:
-- one line item for the **full contract value** — switch to the deposit with one
-  line in `config/mapping.json`
-- due **7 days** after the signature date
-- left as a **draft**; the customer is not emailed unless you ask for it
-- raised **once per Pylon project**, so a webhook retry cannot bill twice
+Add `invoices.write` and `locations.readonly` to the Private Integration and the
+invoices will raise for real.
+
+Proven in the test suite against real HTTP stand-ins:
+- signing raises **only** the deposit, at $1,560 — 10% of $15,600
+- `POST /invoices/pre_install` raises $9,360, `POST /invoices/installation`
+  raises $1,560
+- calling either twice does **not** bill twice; nor does a redelivered signature
+- a later stage needs **no Pylon call** — the contract total is remembered
+- the endpoint refuses a customer with no signed contract on record, and
+  requires the admin token
+
+### The 80% question
+
+10 + 60 + 10 = 80. The bridge reports this rather than silently under-billing:
+
+> The invoice stages for "web_proposals.signed" add up to 80% of the contract,
+> not 100%. On a $10,000 contract the customer would be invoiced $8,000 in total.
+
+One number in `config/mapping.json` fixes it if the last stage should be 30%.
 
 ## Not yet proven
 

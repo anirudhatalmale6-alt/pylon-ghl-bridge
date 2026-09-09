@@ -216,12 +216,13 @@ export class Processor {
       pipeline: targets.pipeline,
     });
 
-    // 5. Invoice, if the business has switched it on.
-    const invoice = await this.createInvoice({
+    // 5. Invoices for any payment stage triggered by the signature.
+    const invoices = await this.raiseInvoices({
       mapping,
       payload,
       contactId: contactResult.id,
       warnings,
+      trigger: 'signed',
     });
 
     // 6. Timeline note, so the change is visible without opening a field.
@@ -242,7 +243,10 @@ export class Processor {
       contactName: payload.client.name,
       contactEmail: payload.client.email,
       signedAt: payload.contract.signed_at,
-      ...(invoice.id ? { invoiceId: invoice.id } : {}),
+      contractTotal: payload.contract.total_amount,
+      currency: payload.contract.currency,
+      reference: payload.project.reference_number,
+      contactPhone: payload.client.phone,
     });
 
     return {
@@ -260,129 +264,13 @@ export class Processor {
       contractFileUrl: contract.url,
       contractFileBytes: contract.bytes,
       contractAttachedToContact: contactFileAttached,
-      invoiceId: invoice.id,
-      invoiceTotal: invoice.total,
-      invoiceSent: invoice.sent,
+      invoices,
+      invoicedTotal: invoices.reduce((sum, i) => sum + (i.amount ?? 0), 0),
       noteAdded,
       warnings,
     };
   }
 
-  /**
-   * Raises a GoHighLevel invoice for the signed contract.
-   *
-   * Never fails the event: a signature that reached the CRM is worth more than
-   * an invoice that didn't, so every problem here degrades to a warning.
-   */
-  async createInvoice({ mapping, payload, contactId, warnings }) {
-    const none = { id: null, total: null, sent: false };
-    if (!this.config.ghl.createInvoice) return none;
-
-    const section = mapping.invoice;
-    if (!section) {
-      warnings.push('Invoicing is switched on but config/mapping.json has no "invoice" section for this event, so none was raised.');
-      return none;
-    }
-
-    // Pylon retries; an invoice is a billing document and must not be raised twice.
-    const existing = this.store?.lookupProject(payload.project.id);
-    if (existing?.invoiceId) {
-      logger.info('invoice already exists for this project, not raising another', {
-        projectId: payload.project.id,
-        invoiceId: existing.invoiceId,
-      });
-      return { id: existing.invoiceId, total: null, sent: false, alreadyExisted: true };
-    }
-
-    const items = [];
-    for (const item of section.items ?? []) {
-      const amount = toNumber(render(item.amount, payload));
-      if (amount === null) continue;
-      items.push({
-        name: render(item.name, payload) || 'Contract',
-        description: render(item.description, payload) || '',
-        amount,
-        qty: Number(item.qty) || 1,
-      });
-    }
-
-    if (!items.length) {
-      warnings.push(
-        this.canEnrich
-          ? 'No invoice was raised: none of the invoice line items resolved to an amount. Check the "invoice" section of config/mapping.json.'
-          : 'No invoice was raised, because the contract value is only readable through the Pylon API and no token is configured. Everything else still landed.',
-      );
-      return none;
-    }
-
-    const total = items.reduce((sum, item) => sum + item.amount * item.qty, 0);
-
-    let business = {};
-    try {
-      const location = await this.ghl.getLocation();
-      business = {
-        name: location?.name ?? '',
-        address: [location?.address, location?.city, location?.state, location?.postalCode].filter(Boolean).join(', '),
-        phoneNo: location?.phone ?? '',
-        website: location?.website ?? '',
-        logoUrl: location?.logoUrl || undefined,
-      };
-    } catch (error) {
-      // Not fatal — GHL fills its own defaults if businessDetails is thin.
-      logger.warn('could not read the location for invoice business details', { error });
-    }
-
-    const issueDate = toIsoDate(payload.contract.signed_at) || toIsoDate(new Date().toISOString());
-    const dueDate = addDays(issueDate, this.config.ghl.invoiceDueDays);
-
-    let invoice;
-    try {
-      invoice = await this.ghl.createInvoice({
-        name: render(section.name, payload) || `Contract ${payload.project.reference_number || ''}`.trim(),
-        currency: render(section.currency, payload) || payload.contract.currency || 'AUD',
-        businessDetails: business,
-        contactDetails: {
-          id: contactId,
-          name: payload.client.name,
-          email: payload.client.email,
-          phoneNo: payload.client.phone,
-        },
-        items,
-        discount: { type: 'percentage', value: 0 },
-        issueDate,
-        dueDate,
-        liveMode: this.config.ghl.invoiceLiveMode,
-        sentTo: { email: payload.client.email ? [payload.client.email] : [] },
-      });
-    } catch (error) {
-      warnings.push(
-        error.status === 401
-          ? 'No invoice was raised: the GoHighLevel token is missing the "invoices.write" scope. Add it to the Private Integration and replay this event. Everything else landed.'
-          : `No invoice was raised: ${error.message} Everything else landed.`,
-      );
-      logger.warn('invoice creation failed', { error });
-      return none;
-    }
-
-    const id = invoice._id ?? invoice.id;
-
-    let sent = false;
-    if (this.config.ghl.invoiceSendAction !== 'none') {
-      try {
-        await this.ghl.sendInvoice(id, {
-          action: this.config.ghl.invoiceSendAction,
-          userId: this.config.ghl.invoiceUserId || undefined,
-          liveMode: this.config.ghl.invoiceLiveMode,
-        });
-        sent = true;
-      } catch (error) {
-        warnings.push(`The invoice was created but could not be sent: ${error.message} It is on the contact as a draft.`);
-        logger.warn('invoice send failed', { error });
-      }
-    }
-
-    return { id, total, sent };
-  }
 
   // -------------------------------------------------------------- payment
 
@@ -482,6 +370,142 @@ export class Processor {
       noteAdded,
       warnings,
     };
+  }
+
+  /**
+   * Raises the GoHighLevel invoices whose trigger matches.
+   *
+   * The business bills in stages (a deposit on signing, a larger payment before
+   * installation, the balance on the day), so this raises one invoice per stage
+   * rather than one for the whole contract. Only the "signed" stages fire from a
+   * Pylon webhook; the later ones are raised through POST /invoices/:key, which
+   * a GoHighLevel workflow can call when the opportunity reaches the right
+   * stage.
+   *
+   * Never fails the event: a signature that reached the CRM is worth more than
+   * an invoice that didn't, so every problem here degrades to a warning.
+   */
+  async raiseInvoices({ mapping, payload, contactId, warnings, trigger = 'signed', only = null }) {
+    if (!this.config.ghl.createInvoice) return [];
+
+    const section = mapping.invoices;
+    if (!section?.stages?.length) {
+      warnings.push('Invoicing is switched on but config/mapping.json has no "invoices.stages" for this event, so none was raised.');
+      return [];
+    }
+
+    const contractTotal = toNumber(payload.contract.total_amount);
+    if (contractTotal === null || contractTotal <= 0) {
+      warnings.push(
+        this.canEnrich
+          ? 'No invoices were raised: the contract has no total value to take a percentage of.'
+          : 'No invoices were raised, because the contract value is only readable through the Pylon API and no token is configured. Everything else still landed.',
+      );
+      return [];
+    }
+
+    const wanted = section.stages.filter((stage) =>
+      only ? stage.key === only : (stage.trigger ?? 'manual') === trigger,
+    );
+    if (!wanted.length) return [];
+
+    const business = await this.invoiceBusinessDetails();
+    const raised = [];
+
+    for (const stage of wanted) {
+      const already = this.store?.lookupProject(payload.project.id)?.invoices?.[stage.key];
+      if (already) {
+        // An invoice is a billing document. Pylon retries up to five times and a
+        // workflow can fire more than once; neither may bill the customer twice.
+        logger.info('payment stage already invoiced, skipping', { stage: stage.key, invoiceId: already.id });
+        raised.push({ key: stage.key, id: already.id, amount: already.amount, alreadyExisted: true, sent: false });
+        continue;
+      }
+
+      const amount = stageAmount(stage, contractTotal);
+      if (amount === null) {
+        warnings.push(`Payment stage "${stage.key}" has neither a percent nor an amount, so no invoice was raised for it.`);
+        continue;
+      }
+
+      const issueDate = toIsoDate(new Date().toISOString());
+      const invoiceBody = {
+        name: render(stage.name, payload) || `${stage.label ?? stage.key} - ${payload.project.reference_number ?? ''}`.trim(),
+        currency: render(section.currency, payload) || payload.contract.currency || 'AUD',
+        businessDetails: business,
+        contactDetails: {
+          id: contactId,
+          name: payload.client.name,
+          email: payload.client.email,
+          phoneNo: payload.client.phone,
+        },
+        items: [
+          {
+            name: render(stage.name, payload) || stage.label || stage.key,
+            description: render(stage.description, payload) || '',
+            amount,
+            qty: 1,
+          },
+        ],
+        discount: { type: 'percentage', value: 0 },
+        issueDate,
+        dueDate: addDays(issueDate, stage.dueDays ?? this.config.ghl.invoiceDueDays),
+        liveMode: this.config.ghl.invoiceLiveMode,
+        sentTo: { email: payload.client.email ? [payload.client.email] : [] },
+      };
+
+      let invoice;
+      try {
+        invoice = await this.ghl.createInvoice(invoiceBody);
+      } catch (error) {
+        warnings.push(
+          error.status === 401
+            ? `No invoice was raised for the "${stage.key}" stage: the GoHighLevel token is missing the "invoices.write" scope. Add it to the Private Integration and replay this event. Everything else landed.`
+            : `No invoice was raised for the "${stage.key}" stage: ${error.message} Everything else landed.`,
+        );
+        logger.warn('invoice creation failed', { stage: stage.key, error });
+        continue;
+      }
+
+      const id = invoice._id ?? invoice.id;
+      this.store?.recordInvoice(payload.project.id, stage.key, { id, amount });
+
+      let sent = false;
+      if (this.config.ghl.invoiceSendAction !== 'none') {
+        try {
+          await this.ghl.sendInvoice(id, {
+            action: this.config.ghl.invoiceSendAction,
+            userId: this.config.ghl.invoiceUserId || undefined,
+            liveMode: this.config.ghl.invoiceLiveMode,
+          });
+          sent = true;
+        } catch (error) {
+          warnings.push(`The "${stage.key}" invoice was created but could not be sent: ${error.message} It is on the contact as a draft.`);
+          logger.warn('invoice send failed', { stage: stage.key, error });
+        }
+      }
+
+      raised.push({ key: stage.key, label: stage.label ?? stage.key, id, amount, sent });
+    }
+
+    return raised;
+  }
+
+  async invoiceBusinessDetails() {
+    try {
+      const location = await this.ghl.getLocation();
+      return {
+        name: location?.name ?? '',
+        address: [location?.address, location?.city, location?.state, location?.postalCode].filter(Boolean).join(', '),
+        phoneNo: location?.phone ?? '',
+        website: location?.website ?? '',
+        logoUrl: location?.logoUrl || undefined,
+      };
+    } catch (error) {
+      // Not fatal — GHL fills its own defaults if businessDetails is thin.
+      logger.warn('could not read the location for invoice business details', { error });
+      return {};
+    }
   }
 
   /**
@@ -793,4 +817,17 @@ function addDays(isoDate, days) {
   if (Number.isNaN(d.getTime())) return isoDate;
   d.setUTCDate(d.getUTCDate() + Number(days || 0));
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * A stage's amount: an explicit `amount` wins, otherwise `percent` of the
+ * contract total. Rounded to cents so the stages add up to what was quoted.
+ */
+function stageAmount(stage, contractTotal) {
+  if (stage.amount !== undefined && stage.amount !== null) {
+    return toNumber(stage.amount);
+  }
+  const percent = toNumber(stage.percent);
+  if (percent === null) return null;
+  return Math.round(contractTotal * percent) / 100;
 }
