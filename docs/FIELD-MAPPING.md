@@ -128,6 +128,15 @@ deliberate whitelist: this file writes into customer records, so an unfiltered
 `{{env.…}}` would let a mistyped `{{env.GHL_API_TOKEN}}` publish a credential
 into the CRM. Anything not named `TPL_` renders as empty.
 
+#### Invoice identity
+
+| Mapping key | What it does |
+| --- | --- |
+| `invoices.businessName` | overrides the invoice's business name. The GoHighLevel location holds the *trading* name; a tax invoice needs the legal entity. Blank falls back to the location. |
+| `invoices.businessAbn` | printed as its own line on the invoice. Blank prints nothing — no empty "ABN:" label. |
+
+The address, phone and website still come from the GoHighLevel location.
+
 **The percentages are checked.** If the stages do not add up to 100% the bridge
 says so at startup and on `GET /health`, with the shortfall in dollars. A
 `remainder` stage makes the total 100% by construction, so there is nothing to

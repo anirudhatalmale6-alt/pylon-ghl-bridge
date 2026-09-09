@@ -410,6 +410,12 @@ export class Processor {
     if (!wanted.length) return [];
 
     const business = await this.invoiceBusinessDetails();
+    // The GoHighLevel location holds the TRADING name. A tax invoice has to
+    // carry the legal entity and its ABN, which can differ, so both are
+    // overridable from the mapping (and therefore from .env).
+    const businessName = render(section.businessName, payload);
+    if (businessName) business.name = businessName;
+    const businessAbn = render(section.businessAbn, payload);
     const raised = [];
     // Computed across ALL stages, not just the ones being raised now — the
     // remainder stage needs to know what the others took.
@@ -470,7 +476,10 @@ export class Processor {
 
       // How to pay. On a bank-transfer business this is the only thing telling
       // the customer where to send the money, so it matters more than usual.
-      const terms = render(stage.termsNotes ?? section.termsNotes, payload);
+      let terms = render(stage.termsNotes ?? section.termsNotes, payload);
+      // Appended rather than templated into termsNotes so that an unset ABN
+      // leaves no dangling "ABN:" label on the invoice.
+      if (businessAbn) terms = `${terms ?? ''}<p>ABN: ${businessAbn}</p>`;
       if (terms) invoiceBody.termsNotes = terms;
 
       // Only sent when a card/bank-debit preference is actually configured.

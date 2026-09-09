@@ -130,6 +130,26 @@ TPL_BANK_ACCOUNT=00000000
 Only `TPL_*` variables are readable from the mapping, so a mistyped
 `{{env.GHL_API_TOKEN}}` cannot write a credential into a customer record.
 
+#### Whose name goes on the invoice
+
+The GoHighLevel location holds your **trading** name. A tax invoice has to show
+the seller's identity and ABN, and the legal entity is often not the trading
+name, so both are settable:
+
+```
+TPL_BUSINESS_NAME=Legal Entity Pty Ltd (Trading as Your Brand)
+TPL_BUSINESS_ABN=12 345 678 901
+```
+
+Leave `TPL_BUSINESS_NAME` blank to use the location's name. Leave
+`TPL_BUSINESS_ABN` blank and no ABN line is printed at all — there is never a
+dangling "ABN:" label.
+
+> The ATO requires a tax invoice to show the seller's identity **and ABN**, and
+> for sales of $1,000 or more the buyer's identity or ABN as well. The buyer's
+> name and email are already on every invoice. Set the ABN before these go to
+> real customers, and check the wording with your accountant.
+
 With no payment provider connected, no Stripe payment-method block is sent at
 all. Set `GHL_INVOICE_SEND_ACTION=email` if you want the customer to actually
 receive the invoice; the default leaves it as a draft.

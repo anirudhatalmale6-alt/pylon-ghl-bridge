@@ -9,6 +9,13 @@ import { makeConfig, postWebhook, startBridge, WEBHOOK_SECRET } from './helpers/
  * servers, so the multipart uploads, headers and query strings are all genuine.
  */
 
+// Importing the app loads .env, so without this the suite would read whatever
+// TPL_* values happen to be on the developer's machine and pass or fail
+// accordingly. Tests that need one set it themselves.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('TPL_')) delete process.env[key];
+}
+
 async function harness(options = {}) {
   const pylon = await startFakePylon(options.pylon ?? {});
   const ghl = await startFakeGhl(options.ghl ?? {});
@@ -1039,4 +1046,53 @@ test('the shipped mapping keeps bank details out of the repo', async (t) => {
   assert.match(raw, /\{\{env\.BANK_BSB\}\}/, 'the committed file references the value, it does not contain it');
   assert.doesNotMatch(raw, /\d{3}-\d{3}/, 'no BSB-shaped string is committed');
   assert.doesNotMatch(raw, /\b\d{8,}\b/, 'no account-number-shaped string is committed');
+});
+
+test('the legal entity overrides the location name on an invoice', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  process.env.TPL_BUSINESS_NAME = 'Legal Entity Pty Ltd (Trading as Test Solar Co)';
+  t.after(() => { delete process.env.TPL_BUSINESS_NAME; });
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const invoice = h.ghl.find('POST', '/invoices/');
+  assert.equal(
+    invoice.body.businessDetails.name,
+    'Legal Entity Pty Ltd (Trading as Test Solar Co)',
+    'the GoHighLevel location holds the TRADING name; a tax invoice needs the entity',
+  );
+});
+
+test('with no override the invoice falls back to the location name', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  assert.equal(h.ghl.find('POST', '/invoices/').body.businessDetails.name, 'Test Solar Co');
+});
+
+test('an ABN is printed when set, and leaves no empty label when not', async (t) => {
+  const withAbn = await harness({ config: INVOICING_ON });
+  t.after(() => withAbn.close());
+
+  process.env.TPL_BUSINESS_ABN = '12 345 678 901';
+  t.after(() => { delete process.env.TPL_BUSINESS_ABN; });
+
+  await postWebhook(withAbn.bridge.base, readFixture('event-signed.json'));
+  await withAbn.bridge.queue.onIdle();
+  assert.match(withAbn.ghl.find('POST', '/invoices/').body.termsNotes, /ABN: 12 345 678 901/);
+
+  delete process.env.TPL_BUSINESS_ABN;
+  const without = await harness({ config: INVOICING_ON });
+  t.after(() => without.close());
+
+  await postWebhook(without.bridge.base, readFixture('event-signed.json'));
+  await without.bridge.queue.onIdle();
+  const terms = without.ghl.find('POST', '/invoices/').body.termsNotes;
+  assert.doesNotMatch(terms, /ABN/, 'no dangling "ABN:" label when there is no ABN to print');
 });
