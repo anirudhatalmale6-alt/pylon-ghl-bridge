@@ -170,12 +170,39 @@ The test stand-in had accepted both happily, which is exactly how a bug ships
 green. It now rejects them the same way the live API does — reverting either fix
 fails six tests.
 
+## Deployed and verified — 10 September 2026
+
+Live at `https://pylon-ghl-bridge.onrender.com` on a Render Starter instance
+with a 1 GB disk, deployed from the `render.yaml` blueprint by the client.
+
+Checked against the running service, not a local copy:
+
+| Check | Result |
+| --- | --- |
+| `GET /health?deep=1` | `ok: true`, `mode: full`, `dryRun: false` |
+| Pylon API | connected |
+| GoHighLevel API | connected |
+| Pipeline + stage resolution | "Inspire Sales Leads" / "Contract Signed - Ready for finial approval" |
+| `GET /mapping` | 23 mapping lines, **0 unresolved** against the real account |
+| Unsigned webhook | **401**, nothing written |
+| `/events` without the admin token | **401** |
+| `/events` with the admin token | 200 |
+
+### The deadlock this deploy nearly hit
+
+The service used to refuse to start without `PYLON_WEBHOOK_SECRET`. But Pylon
+only issues that secret when the webhook destination is created, and creating
+the destination needs the deployed URL — so the first deploy would have
+crash-looped with no URL to give Pylon.
+
+It is now a startup warning. The failure mode was already safe: every webhook is
+rejected with *"No PYLON_WEBHOOK_SECRET is configured on this server"*, which is
+exactly what the live service returns today, and health stays green so the host
+does not kill the deploy.
+
 ## Not yet proven
 
-The Pylon end. Nothing has been read from a real Pylon account, because no API
-token exists yet, and no real Pylon webhook has been delivered, because the
-destination has not been created. Both need:
-
-1. Pylon support to enable API access on the team, then a read token, and
-2. the bridge deployed on a public HTTPS URL so a webhook destination can point
-   at it.
+One hop: a **real Pylon webhook**. The destination has not been created yet, so
+no signature has travelled from Pylon to GoHighLevel unaided. Everything either
+side of it is verified — real Pylon data is read successfully, and real
+GoHighLevel records are written.

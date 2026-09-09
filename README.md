@@ -79,6 +79,15 @@ token later and replay the events (`POST /events/{id}/replay`) to fill them in.
 
 `GET /health` reports which mode it is in.
 
+## Running
+
+Live at `https://pylon-ghl-bridge.onrender.com` (Render Starter + 1 GB disk),
+deployed from [`render.yaml`](render.yaml). Webhook endpoint:
+
+```
+https://pylon-ghl-bridge.onrender.com/webhooks/pylon
+```
+
 ## Proof it works
 
 [docs/LIVE-TEST.md](docs/LIVE-TEST.md) — a real run against a live GoHighLevel
