@@ -200,9 +200,39 @@ rejected with *"No PYLON_WEBHOOK_SECRET is configured on this server"*, which is
 exactly what the live service returns today, and health stays green so the host
 does not kill the deploy.
 
+## Webhook signing verified live — 10 September 2026
+
+The Pylon webhook destination now exists and `PYLON_WEBHOOK_SECRET` is set on
+the running service. Verified against it directly:
+
+| Request | Result |
+| --- | --- |
+| Correctly signed with the destination's secret | **202 accepted** |
+| Same body, deliberately wrong signature | **401** — *"Signature does not match…"* |
+
+The 401 control is the important half. Without it, a 202 only proves the service
+answers, not that it is checking anything.
+
+The signed request deliberately named a **non-existent** Pylon project, so it
+could not touch a real customer. It was accepted, then failed exactly as it
+should:
+
+> Pylon could not find the requested record (HTTP 404 on GET
+> api.getpylon.com/v1/solar_projects/ZZZ-does-not-exist).
+
+Nothing was written to GoHighLevel. That one failed event is the only entry in
+the production log and is expected.
+
 ## Not yet proven
 
-One hop: a **real Pylon webhook**. The destination has not been created yet, so
-no signature has travelled from Pylon to GoHighLevel unaided. Everything either
-side of it is verified — real Pylon data is read successfully, and real
-GoHighLevel records are written.
+One hop: a **real signature event travelling from Pylon to GoHighLevel unaided**.
+
+This was left deliberately. Every signed project in the live Pylon account
+belongs to an actual customer, and pushing one through to prove the point would
+create a real contact, a real opportunity and three real invoices for someone
+who signed nothing that day. It needs a dummy proposal signed in Pylon instead.
+
+Everything either side of that hop is verified: real Pylon data is read
+successfully (contract value, system size, a real 1.7 MB signed PDF), real
+GoHighLevel records are written, and the signature check on the live service
+accepts a genuine signature and rejects a forged one.
