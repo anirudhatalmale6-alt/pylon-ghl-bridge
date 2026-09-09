@@ -74,6 +74,32 @@ Run `npm run discover` to print all three for every field in your account.
    1 the CRM field is left unchanged and rule 2 puts a warning on the event.
    See [SETUP.md](SETUP.md#running-before-that-happens--webhook-only-mode).
 
+### The invoice
+
+The `invoice` section of a signed-event mapping controls what GoHighLevel
+invoices, when `GHL_CREATE_INVOICE=true`:
+
+```json
+"invoice": {
+  "name": "{{contract.name}} - {{project.reference_number}}",
+  "currency": "{{contract.currency || 'AUD'}}",
+  "items": [
+    { "name": "{{contract.name}}",
+      "description": "{{contract.description || contract.title}}",
+      "amount": "{{contract.total_amount}}",
+      "qty": 1 }
+  ]
+}
+```
+
+`amount` is in dollars, not cents. To invoice a **deposit** instead of the full
+contract, point it at a deposit figure — or add a second line item and split it.
+A line item whose `amount` does not resolve to a number is dropped; if none
+resolve, no invoice is raised and the event says so.
+
+The business name, address, phone and website come from your GoHighLevel
+location, not from this file.
+
 ### The signed contract PDF
 
 Three mapping lines, three different things:

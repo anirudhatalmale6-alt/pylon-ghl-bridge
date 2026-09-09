@@ -1,7 +1,7 @@
 import { IntegrationError } from './lib/errors.js';
 import { logger } from './lib/logger.js';
 import { eventRelationships, normalizePaymentEvent, normalizeSignedEvent } from './normalize.js';
-import { buildCustomFields, cleanCustomFields, indexCustomFields, render, renderObject } from './mapping.js';
+import { buildCustomFields, cleanCustomFields, indexCustomFields, render, renderObject, toIsoDate } from './mapping.js';
 
 export const SIGNED_EVENT = 'web_proposals.signed';
 export const PAYMENT_EVENT = 'gateway_payments.created';
@@ -216,7 +216,15 @@ export class Processor {
       pipeline: targets.pipeline,
     });
 
-    // 5. Timeline note, so the change is visible without opening a field.
+    // 5. Invoice, if the business has switched it on.
+    const invoice = await this.createInvoice({
+      mapping,
+      payload,
+      contactId: contactResult.id,
+      warnings,
+    });
+
+    // 6. Timeline note, so the change is visible without opening a field.
     let noteAdded = false;
     if (this.config.ghl.addNote && mapping.note) {
       const body = render(mapping.note, payload);
@@ -234,6 +242,7 @@ export class Processor {
       contactName: payload.client.name,
       contactEmail: payload.client.email,
       signedAt: payload.contract.signed_at,
+      ...(invoice.id ? { invoiceId: invoice.id } : {}),
     });
 
     return {
@@ -251,9 +260,128 @@ export class Processor {
       contractFileUrl: contract.url,
       contractFileBytes: contract.bytes,
       contractAttachedToContact: contactFileAttached,
+      invoiceId: invoice.id,
+      invoiceTotal: invoice.total,
+      invoiceSent: invoice.sent,
       noteAdded,
       warnings,
     };
+  }
+
+  /**
+   * Raises a GoHighLevel invoice for the signed contract.
+   *
+   * Never fails the event: a signature that reached the CRM is worth more than
+   * an invoice that didn't, so every problem here degrades to a warning.
+   */
+  async createInvoice({ mapping, payload, contactId, warnings }) {
+    const none = { id: null, total: null, sent: false };
+    if (!this.config.ghl.createInvoice) return none;
+
+    const section = mapping.invoice;
+    if (!section) {
+      warnings.push('Invoicing is switched on but config/mapping.json has no "invoice" section for this event, so none was raised.');
+      return none;
+    }
+
+    // Pylon retries; an invoice is a billing document and must not be raised twice.
+    const existing = this.store?.lookupProject(payload.project.id);
+    if (existing?.invoiceId) {
+      logger.info('invoice already exists for this project, not raising another', {
+        projectId: payload.project.id,
+        invoiceId: existing.invoiceId,
+      });
+      return { id: existing.invoiceId, total: null, sent: false, alreadyExisted: true };
+    }
+
+    const items = [];
+    for (const item of section.items ?? []) {
+      const amount = toNumber(render(item.amount, payload));
+      if (amount === null) continue;
+      items.push({
+        name: render(item.name, payload) || 'Contract',
+        description: render(item.description, payload) || '',
+        amount,
+        qty: Number(item.qty) || 1,
+      });
+    }
+
+    if (!items.length) {
+      warnings.push(
+        this.canEnrich
+          ? 'No invoice was raised: none of the invoice line items resolved to an amount. Check the "invoice" section of config/mapping.json.'
+          : 'No invoice was raised, because the contract value is only readable through the Pylon API and no token is configured. Everything else still landed.',
+      );
+      return none;
+    }
+
+    const total = items.reduce((sum, item) => sum + item.amount * item.qty, 0);
+
+    let business = {};
+    try {
+      const location = await this.ghl.getLocation();
+      business = {
+        name: location?.name ?? '',
+        address: [location?.address, location?.city, location?.state, location?.postalCode].filter(Boolean).join(', '),
+        phoneNo: location?.phone ?? '',
+        website: location?.website ?? '',
+        logoUrl: location?.logoUrl || undefined,
+      };
+    } catch (error) {
+      // Not fatal — GHL fills its own defaults if businessDetails is thin.
+      logger.warn('could not read the location for invoice business details', { error });
+    }
+
+    const issueDate = toIsoDate(payload.contract.signed_at) || toIsoDate(new Date().toISOString());
+    const dueDate = addDays(issueDate, this.config.ghl.invoiceDueDays);
+
+    let invoice;
+    try {
+      invoice = await this.ghl.createInvoice({
+        name: render(section.name, payload) || `Contract ${payload.project.reference_number || ''}`.trim(),
+        currency: render(section.currency, payload) || payload.contract.currency || 'AUD',
+        businessDetails: business,
+        contactDetails: {
+          id: contactId,
+          name: payload.client.name,
+          email: payload.client.email,
+          phoneNo: payload.client.phone,
+        },
+        items,
+        discount: { type: 'percentage', value: 0 },
+        issueDate,
+        dueDate,
+        liveMode: this.config.ghl.invoiceLiveMode,
+        sentTo: { email: payload.client.email ? [payload.client.email] : [] },
+      });
+    } catch (error) {
+      warnings.push(
+        error.status === 401
+          ? 'No invoice was raised: the GoHighLevel token is missing the "invoices.write" scope. Add it to the Private Integration and replay this event. Everything else landed.'
+          : `No invoice was raised: ${error.message} Everything else landed.`,
+      );
+      logger.warn('invoice creation failed', { error });
+      return none;
+    }
+
+    const id = invoice._id ?? invoice.id;
+
+    let sent = false;
+    if (this.config.ghl.invoiceSendAction !== 'none') {
+      try {
+        await this.ghl.sendInvoice(id, {
+          action: this.config.ghl.invoiceSendAction,
+          userId: this.config.ghl.invoiceUserId || undefined,
+          liveMode: this.config.ghl.invoiceLiveMode,
+        });
+        sent = true;
+      } catch (error) {
+        warnings.push(`The invoice was created but could not be sent: ${error.message} It is on the contact as a draft.`);
+        logger.warn('invoice send failed', { error });
+      }
+    }
+
+    return { id, total, sent };
   }
 
   // -------------------------------------------------------------- payment
@@ -657,4 +785,12 @@ function buildFilename(payload) {
   const parts = ['Signed Contract', payload.project.reference_number, payload.client.name].filter(Boolean);
   const base = parts.join(' - ').replace(/[^\w\s.-]/g, '').replace(/\s+/g, ' ').trim();
   return `${base || 'Signed Contract'}.pdf`;
+}
+
+/** Adds whole days to a YYYY-MM-DD string, staying in UTC. */
+function addDays(isoDate, days) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return isoDate;
+  d.setUTCDate(d.getUTCDate() + Number(days || 0));
+  return d.toISOString().slice(0, 10);
 }

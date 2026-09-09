@@ -122,6 +122,30 @@ contact id and the *same* opportunity id — the second run updated rather than
 duplicated. Pylon retries a webhook up to five times over ~31 hours, so this
 matters.
 
+## Invoicing (added 9 September)
+
+`GHL_CREATE_INVOICE=true` raises a GoHighLevel invoice for the contract value on
+signature. Verified against the live account, and it did exactly what it is
+supposed to do with the token as it stands today:
+
+> No invoice was raised: the GoHighLevel token is missing the "invoices.write"
+> scope. Add it to the Private Integration and replay this event. Everything
+> else landed.
+
+And everything else *did* land in the same run — opportunity value 15600, 18
+fields, the PDF, the note, then the payment. An invoice problem never costs you
+the contract.
+
+Add `invoices.write` (and `locations.readonly`, for the business details on the
+invoice) to the Private Integration and it will raise properly.
+
+Defaults, all changeable:
+- one line item for the **full contract value** — switch to the deposit with one
+  line in `config/mapping.json`
+- due **7 days** after the signature date
+- left as a **draft**; the customer is not emailed unless you ask for it
+- raised **once per Pylon project**, so a webhook retry cannot bill twice
+
 ## Not yet proven
 
 The Pylon end. Nothing has been read from a real Pylon account, because no API

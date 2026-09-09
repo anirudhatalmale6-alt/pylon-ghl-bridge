@@ -29,7 +29,7 @@ const FILTERS = {
   count: (v) => (Array.isArray(v) ? v.length : v ? 1 : 0),
 };
 
-function toIsoDate(value) {
+export function toIsoDate(value) {
   if (!value) return '';
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return '';

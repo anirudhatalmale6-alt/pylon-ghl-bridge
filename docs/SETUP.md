@@ -54,11 +54,48 @@ Tick these scopes:
 | `locations/customFields.write` | only needed for `npm run bootstrap-fields` |
 | `medias.write` | store the signed contract PDF |
 | `forms.write` | attach the PDF to the contact record |
+| `locations.readonly` | read your business details for invoices |
+| `invoices.write` | **only if you want invoices raised** — see below |
 
 Copy the token into `GHL_API_TOKEN`.
 
 Then **Settings → Business Profile** and copy the **Location ID** (the
 sub-account id, not the agency id) into `GHL_LOCATION_ID`.
+
+### Invoices (optional)
+
+Set `GHL_CREATE_INVOICE=true` and a GoHighLevel invoice is raised for the
+contract value the moment a contract is signed. It is **off by default** —
+raising an invoice is a billing action, not a data sync.
+
+`invoices.write` is **not** included in a Private Integration by default. Without
+it the invoice step fails with:
+
+> No invoice was raised: the GoHighLevel token is missing the "invoices.write"
+> scope. Add it to the Private Integration and replay this event. Everything
+> else landed.
+
+Everything else still lands — the signature never fails because of an invoice.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `GHL_CREATE_INVOICE` | `false` | raise an invoice on signature |
+| `GHL_INVOICE_SEND_ACTION` | `none` | `none` leaves it as a draft. `send_manually` marks it sent without contacting the customer. `email`, `sms`, `sms_and_email` actually contact them. |
+| `GHL_INVOICE_DUE_DAYS` | `7` | days from the signature date to the due date |
+| `GHL_INVOICE_LIVE_MODE` | `true` | set `false` for GoHighLevel test-mode invoices |
+| `GHL_INVOICE_USER_ID` | — | who the send is recorded under; avoids needing `users.readonly` |
+
+What goes on the invoice is set in the `invoice` section of
+`config/mapping.json` — see [FIELD-MAPPING.md](FIELD-MAPPING.md). By default it
+is one line item for the full contract value. To invoice the deposit instead,
+change that one line to `{{contract.deposit_amount_formatted}}`'s underlying
+number, or add a second line item.
+
+Business details (your name, address, phone, website) are read from your
+GoHighLevel location automatically, so there is nothing to type in.
+
+> An invoice is only ever raised once per Pylon project. Pylon retries a webhook
+> up to five times, and a duplicate billing document is not acceptable.
 
 ## 3. GoHighLevel — pipeline and stage
 
@@ -71,7 +108,7 @@ GHL_SIGNED_STAGE_NAME=Contract Signed - Ready for finial approval
 GHL_PAID_STAGE_NAME=                  # optional, leave blank to not move on payment
 ```
 
-> These are the real values for location your GoHighLevel location. Note the
+> These are the real values for the Inspire Energy location. Note the
 > pipeline is called **Inspire Sales Leads**, not "Inspire Sales Pipeline" —
 > the names have to match the CRM exactly. `npm run discover` writes every
 > pipeline, stage and field id to `discovery.md` if they ever change.

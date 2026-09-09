@@ -577,3 +577,134 @@ test('a Pylon token restores the full picture — same event, contract value and
   assert.equal(result.monetaryValue, 15600);
   assert.ok(result.contractFileUrl, 'and the PDF is re-hosted');
 });
+
+// ---------------------------------------------------------------------------
+// Invoicing. Off by default — creating one is a billing action.
+// ---------------------------------------------------------------------------
+
+const INVOICING_ON = { ghl: { createInvoice: true } };
+
+test('no invoice is raised unless invoicing is switched on', async (t) => {
+  const h = await harness();
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  assert.equal(h.ghl.calls.filter((c) => c.path === '/invoices/').length, 0);
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceId, null);
+});
+
+test('a signed contract raises an invoice for the contract value', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(record.status, 'succeeded', JSON.stringify(record.error));
+  assert.deepEqual(record.result.warnings, []);
+  assert.equal(record.result.invoiceId, 'inv-1');
+  assert.equal(record.result.invoiceTotal, 15600);
+
+  const call = h.ghl.find('POST', '/invoices/');
+  assert.ok(call, 'the invoice was actually posted');
+  assert.equal(
+    call.headers.version,
+    '2021-04-15',
+    'the Invoices API is versioned separately from the rest of v2 — 2021-07-28 is rejected',
+  );
+  assert.equal(call.body.altType, 'location');
+  assert.equal(call.body.currency, 'AUD');
+  assert.equal(call.body.contactDetails.id, 'contact-1');
+  assert.equal(call.body.contactDetails.email, 'andre@example.com');
+  assert.deepEqual(call.body.sentTo.email, ['andre@example.com']);
+  assert.equal(call.body.items.length, 1);
+  assert.equal(call.body.items[0].amount, 15600);
+  assert.equal(call.body.items[0].qty, 1);
+
+  // Dates: issued on the signature, due the configured number of days later.
+  assert.equal(call.body.issueDate, '2026-08-25');
+  assert.equal(call.body.dueDate, '2026-09-01', 'seven days after issue, crossing a month boundary');
+
+  // Business details are read from the location rather than hardcoded.
+  assert.equal(call.body.businessDetails.name, 'Test Solar Co');
+  assert.equal(call.body.businessDetails.address, '1 Business Road, Newcastle, NSW, 2300');
+});
+
+test('an invoice is not emailed to the customer unless that is asked for', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  assert.equal(
+    h.ghl.calls.filter((c) => /\/send$/.test(c.path)).length,
+    0,
+    'default is a draft — auto-emailing a customer the moment they sign is the business\'s call, not mine',
+  );
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceSent, false);
+});
+
+test('the invoice is sent when an action is configured', async (t) => {
+  const h = await harness({ config: { ghl: { createInvoice: true, invoiceSendAction: 'email' } } });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const send = h.ghl.find('POST', '/invoices/inv-1/send');
+  assert.ok(send, 'the send endpoint was called');
+  assert.equal(send.body.action, 'email');
+  assert.equal(send.headers.version, '2021-04-15');
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceSent, true);
+});
+
+test('a redelivered signature does not raise a second invoice', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  // Force a genuine reprocess rather than the duplicate short-circuit, which is
+  // what a replay or a changed event id would do.
+  h.bridge.store.update('oKcdQEqKvq962di', { status: 'received', attempts: 0 });
+  h.bridge.queue.enqueue('oKcdQEqKvq962di');
+  await h.bridge.queue.onIdle();
+
+  assert.equal(
+    h.ghl.calls.filter((c) => c.method === 'POST' && c.path === '/invoices/').length,
+    1,
+    'an invoice is a billing document — Pylon retries must never produce two',
+  );
+  assert.equal(h.bridge.store.get('oKcdQEqKvq962di').result.invoiceId, 'inv-1');
+});
+
+test('a missing invoices.write scope names the scope and does not fail the event', async (t) => {
+  const h = await harness({ ghl: { invoiceScope: false }, config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(record.status, 'succeeded', 'the signature still lands — an invoice failure must not lose the contract');
+  assert.equal(record.result.invoiceId, null);
+  assert.equal(record.result.monetaryValue, 15600, 'and the opportunity value is still set');
+  assert.match(record.result.warnings.join(' '), /invoices\.write/);
+});
+
+test('webhook-only mode does not raise an invoice for an unknown amount', async (t) => {
+  const h = await harness({ config: { ...NO_PYLON_TOKEN, ghl: { createInvoice: true } } });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(h.ghl.calls.filter((c) => c.path === '/invoices/').length, 0);
+  assert.match(record.result.warnings.join(' '), /contract value is only readable through the Pylon API/);
+});

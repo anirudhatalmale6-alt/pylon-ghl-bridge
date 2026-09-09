@@ -97,6 +97,21 @@ export const config = {
     contractFileFieldKey: process.env.GHL_CONTRACT_FILE_FIELD_KEY || 'contact.signed_contract_file',
     uploadContractFile: bool(process.env.GHL_UPLOAD_CONTRACT_FILE, true),
     addNote: bool(process.env.GHL_ADD_NOTE, true),
+
+    // Raise a GoHighLevel invoice when a contract is signed. Off by default:
+    // it needs the `invoices.write` scope, and creating one is a billing action
+    // that should be switched on deliberately.
+    createInvoice: bool(process.env.GHL_CREATE_INVOICE, false),
+    // sms_and_email | email | sms | send_manually | none
+    // "none" leaves the invoice as a draft and never contacts the customer.
+    // "send_manually" marks it sent without emailing them.
+    invoiceSendAction: process.env.GHL_INVOICE_SEND_ACTION || 'none',
+    // Whose name the send is recorded under. Needs `users.readonly` to look up;
+    // supply it directly to avoid that scope.
+    invoiceUserId: process.env.GHL_INVOICE_USER_ID || '',
+    invoiceDueDays: int(process.env.GHL_INVOICE_DUE_DAYS, 7),
+    // Test-mode invoices in GHL when false.
+    invoiceLiveMode: bool(process.env.GHL_INVOICE_LIVE_MODE, true),
   },
 
   // Optional outbound "did it land?" callback. Every processed event POSTs a
@@ -134,6 +149,10 @@ export function validateConfig(cfg = config) {
   }
   if (!cfg.ghl.signedStageId && !cfg.ghl.signedStageName) {
     problems.push('Set GHL_SIGNED_STAGE_ID or GHL_SIGNED_STAGE_NAME — the bridge needs to know which stage means "contract signed".');
+  }
+  const sendActions = ['none', 'send_manually', 'email', 'sms', 'sms_and_email'];
+  if (!sendActions.includes(cfg.ghl.invoiceSendAction)) {
+    problems.push(`GHL_INVOICE_SEND_ACTION must be one of ${sendActions.join(', ')}, got "${cfg.ghl.invoiceSendAction}".`);
   }
   if (!['open', 'won'].includes(cfg.ghl.statusOnSigned)) {
     problems.push(`GHL_STATUS_ON_SIGNED must be "open" or "won", got "${cfg.ghl.statusOnSigned}".`);

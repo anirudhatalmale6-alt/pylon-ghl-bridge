@@ -103,7 +103,7 @@ export const GHL_FIELDS = [
  * Stand-in for services.leadconnectorhq.com. Records every request body so the
  * tests can assert exactly what would have been written to the real CRM.
  */
-export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false } = {}) {
+export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false, invoiceScope = true } = {}) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -132,7 +132,9 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
     if (req.headers.authorization !== 'Bearer ghl-test-token') {
       return json(res, 401, { message: 'Invalid token' });
     }
-    if (req.headers.version !== '2021-07-28') {
+    // Invoices are versioned separately by the real API, so they are checked
+    // against their own value inside the route rather than here.
+    if (!url.pathname.startsWith('/invoices/') && req.headers.version !== '2021-07-28') {
       return json(res, 400, { message: 'Missing Version header' });
     }
 
@@ -157,6 +159,37 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
           },
         ],
       });
+    }
+
+    if (req.method === 'GET' && /^\/locations\/[^/]+$/.test(url.pathname)) {
+      return json(res, 200, {
+        location: {
+          id: url.pathname.split('/').pop(),
+          name: 'Test Solar Co',
+          address: '1 Business Road',
+          city: 'Newcastle',
+          state: 'NSW',
+          postalCode: '2300',
+          phone: '+61200000000',
+          website: 'https://example.com',
+          logoUrl: '',
+        },
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/invoices/') {
+      if (invoiceScope === false) {
+        return json(res, 401, { statusCode: 401, message: 'The token is not authorized for this scope.' });
+      }
+      // The real API is versioned separately; assert the client honours that.
+      if (req.headers.version !== '2021-04-15') {
+        return json(res, 400, { message: `invoices need Version 2021-04-15, got ${req.headers.version}` });
+      }
+      return json(res, 200, { invoice: { _id: 'inv-1', ...body } });
+    }
+
+    if (req.method === 'POST' && /^\/invoices\/[^/]+\/send$/.test(url.pathname)) {
+      return json(res, 200, { invoice: { _id: url.pathname.split('/')[2], status: 'sent' } });
     }
 
     if (req.method === 'POST' && url.pathname === '/contacts/upsert') {

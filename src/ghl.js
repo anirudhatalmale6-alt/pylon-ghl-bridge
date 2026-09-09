@@ -13,6 +13,13 @@ import { logger } from './lib/logger.js';
  * Only the endpoints this bridge needs are wrapped. Each method notes the
  * documented route so the mapping guide can point at it.
  */
+
+/**
+ * The Invoices API is versioned separately from the rest of v2. Every other
+ * endpoint takes 2021-07-28; invoices take this.
+ */
+const INVOICE_API_VERSION = '2021-04-15';
+
 export class GhlClient {
   constructor({ apiBase, apiToken, apiVersion, locationId, timeoutMs = 30000, dryRun = false }) {
     this.apiBase = apiBase;
@@ -65,7 +72,65 @@ export class GhlClient {
     });
   }
 
+  // ---------------------------------------------------------------- invoices
+
+  /**
+   * POST /invoices/
+   *
+   * NOTE: the Invoices API is versioned separately from the rest of v2 — it
+   * wants `Version: 2021-04-15`, not `2021-07-28`. Sending the wrong one is a
+   * confusing failure, so it is pinned here rather than left to config.
+   *
+   * Requires the `invoices.write` scope on the Private Integration Token. That
+   * scope is NOT included by default; without it every call returns
+   * 401 "The token is not authorized for this scope."
+   */
+  async createInvoice(payload) {
+    const data = await this.requestJsonBody(
+      'POST',
+      '/invoices/',
+      { altId: this.locationId, altType: 'location', ...payload },
+      { headers: { Version: INVOICE_API_VERSION } },
+    );
+    if (data?.dryRun) return { _id: 'dry-run-invoice', dryRun: true };
+    const invoice = data?.invoice ?? data;
+    if (!invoice?._id && !invoice?.id) {
+      throw new IntegrationError('GoHighLevel accepted the invoice but returned no invoice id.', {
+        kind: 'unexpected_response',
+        system: 'GoHighLevel',
+        detail: { data },
+      });
+    }
+    return invoice;
+  }
+
+  /**
+   * POST /invoices/{id}/send
+   * `action` is one of sms_and_email | email | sms | send_manually.
+   * `send_manually` marks it sent without contacting the customer — that is the
+   * default here, because auto-emailing a customer the moment they sign is a
+   * decision for the business to make deliberately.
+   */
+  async sendInvoice(invoiceId, { action = 'send_manually', userId, liveMode = true } = {}) {
+    return this.requestJsonBody(
+      'POST',
+      `/invoices/${encodeURIComponent(invoiceId)}/send`,
+      { altId: this.locationId, altType: 'location', action, liveMode, ...(userId ? { userId } : {}) },
+      { headers: { Version: INVOICE_API_VERSION } },
+    );
+  }
+
   // ---------------------------------------------------------------- metadata
+
+  /** GET /locations/{id} — used to fill an invoice's businessDetails. */
+  async getLocation({ fresh = false } = {}) {
+    const key = 'location';
+    if (!fresh && this._cache.has(key)) return this._cache.get(key);
+    const data = await this.request('GET', `/locations/${encodeURIComponent(this.locationId)}`);
+    const location = data?.location ?? data;
+    this._cache.set(key, location);
+    return location;
+  }
 
   /** GET /locations/{locationId}/customFields?model=contact|opportunity|all */
   async listCustomFields(model = 'all', { fresh = false } = {}) {

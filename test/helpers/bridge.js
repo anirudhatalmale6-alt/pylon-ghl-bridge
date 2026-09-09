@@ -44,6 +44,13 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       contractFileFieldKey: 'contact.signed_contract_file',
       uploadContractFile: true,
       addNote: true,
+      // Mirror the production defaults in src/config.js, or the harness silently
+      // tests a different configuration from the one that ships.
+      createInvoice: false,
+      invoiceSendAction: 'none',
+      invoiceUserId: '',
+      invoiceDueDays: 7,
+      invoiceLiveMode: true,
       ...(overrides.ghl ?? {}),
     },
     callback: { url: '', secret: '', timeoutMs: 2000 },
