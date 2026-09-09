@@ -1123,3 +1123,35 @@ test('an empty Pylon reference number falls back to the project id', async (t) =
   const withRef = render(terms, { project: { reference_number: 'PYL-1', id: '1mX7DYluA' } });
   assert.match(withRef, /Reference: PYL-1/, 'a real reference still wins');
 });
+
+test('the service starts without a webhook secret, and rejects every webhook', async (t) => {
+  // The first deploy cannot have this secret: Pylon only issues it when the
+  // webhook destination is created, and that needs the deployed URL. Refusing
+  // to boot would leave no URL to give Pylon.
+  const { validateConfig, configWarnings } = await import('../src/config.js');
+  const base = {
+    pylon: { apiToken: '', webhookSecret: '' },
+    ghl: {
+      apiToken: 't', locationId: 'l', pipelineName: 'p', signedStageName: 's',
+      statusOnSigned: 'open', invoiceSendAction: 'none',
+    },
+    adminToken: 'a',
+    callback: { url: '', secret: '' },
+    dryRun: false,
+  };
+
+  assert.deepEqual(validateConfig(base), [], 'a missing webhook secret must not stop the service starting');
+  assert.match(configWarnings(base).join(' '), /EVERY incoming webhook is rejected/);
+
+  const h = await harness({ config: { pylon: { webhookSecret: '' } } });
+  t.after(() => h.close());
+
+  const response = await postWebhook(h.bridge.base, readFixture('event-signed.json'), { secret: 'anything' });
+  assert.equal(response.status, 401, 'and nothing gets through while it is unset');
+  assert.match(response.json.error, /No PYLON_WEBHOOK_SECRET is configured/);
+  await h.bridge.queue.onIdle();
+  assert.equal(h.ghl.calls.length, 0, 'nothing is written to the CRM');
+
+  const health = await fetch(`${h.bridge.base}/health`);
+  assert.equal(health.status, 200, 'health stays green so the host does not kill the deploy');
+});

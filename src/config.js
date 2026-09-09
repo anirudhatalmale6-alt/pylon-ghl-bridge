@@ -156,7 +156,6 @@ export const config = {
  */
 export function validateConfig(cfg = config) {
   const problems = [];
-  if (!cfg.pylon.webhookSecret) problems.push('PYLON_WEBHOOK_SECRET is not set — incoming webhooks cannot be verified and will all be rejected.');
   if (!cfg.ghl.apiToken) problems.push('GHL_API_TOKEN is not set — the bridge cannot write to GoHighLevel.');
   if (!cfg.ghl.locationId) problems.push('GHL_LOCATION_ID is not set — GoHighLevel needs to know which sub-account to write to.');
   if (!cfg.ghl.pipelineId && !cfg.ghl.pipelineName) {
@@ -195,6 +194,14 @@ export function configWarnings(cfg = config) {
         'The signer name, email, Pylon deep link, stage move and payment amounts all still land in GoHighLevel. ' +
         'The contract value, site address, system size and the signed PDF are only available through the Pylon API — ' +
         'those will be reported as warnings on every event until a token is configured.',
+    );
+  }
+  if (!cfg.pylon.webhookSecret) {
+    warnings.push(
+      'PYLON_WEBHOOK_SECRET is not set, so EVERY incoming webhook is rejected with 401. ' +
+        'This is expected on a first deploy: Pylon only shows you the secret when you create the webhook ' +
+        'destination, and that needs this service\'s URL. Create the destination, then set the secret and restart. ' +
+        'Refusing to start instead would leave you with no URL to point Pylon at.',
     );
   }
   if (!cfg.adminToken) {

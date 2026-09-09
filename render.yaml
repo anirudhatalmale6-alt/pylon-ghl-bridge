@@ -55,8 +55,10 @@ services:
       # --- Pylon ----------------------------------------------------------
       - key: PYLON_API_TOKEN
         sync: false
-      # Created when the webhook destination is added in Pylon, which needs this
-      # service's URL — so it is filled in on a second pass.
+      # LEAVE BLANK ON THE FIRST DEPLOY. Pylon only shows this when you create
+      # the webhook destination, and that needs this service's URL — so it is
+      # filled in on a second pass. The service starts without it and rejects
+      # every webhook with a clear message until it is set.
       - key: PYLON_WEBHOOK_SECRET
         sync: false
 
