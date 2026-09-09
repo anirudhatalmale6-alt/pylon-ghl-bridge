@@ -111,6 +111,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     const body = {
       ok: true,
       service: 'pylon-ghl-bridge',
+      commit: config.commit,
       uptimeSeconds: Math.round(process.uptime()),
       dryRun: config.dryRun,
       mode: enrichmentEnabled(config) ? 'full' : 'webhook-only',

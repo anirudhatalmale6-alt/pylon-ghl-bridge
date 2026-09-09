@@ -1214,3 +1214,15 @@ test('an unconvertible phone omits the field rather than losing the invoice', as
   assert.equal(invoice.body.contactDetails.phoneNo, undefined, 'a blank line beats a 422 that loses the whole invoice');
   assert.deepEqual(h.bridge.store.get('oKcdQEqKvq962di').result.warnings, []);
 });
+
+test('health reports which build is running', async (t) => {
+  const h = await harness({ config: { commit: 'abc1234' } });
+  t.after(() => h.close());
+
+  const body = await (await fetch(`${h.bridge.base}/health`)).json();
+  assert.equal(
+    body.commit,
+    'abc1234',
+    'without this there is no way to tell a deployed fix from a deploy that never happened',
+  );
+});

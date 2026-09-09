@@ -50,6 +50,10 @@ function int(value, fallback) {
 
 export const config = {
   port: int(process.env.PORT, 3000),
+  // Which build is actually running. Render injects RENDER_GIT_COMMIT; without
+  // this there is no way to tell a deployed fix from a deploy that never
+  // happened, which is exactly the confusion that prompted it.
+  commit: (process.env.RENDER_GIT_COMMIT || process.env.GIT_COMMIT || '').slice(0, 7) || null,
   nodeEnv: process.env.NODE_ENV || 'development',
   dataDir: path.resolve(projectRoot, process.env.DATA_DIR || 'data'),
   mappingFile: path.resolve(projectRoot, process.env.MAPPING_FILE || 'config/mapping.json'),
