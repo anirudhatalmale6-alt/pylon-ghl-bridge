@@ -452,6 +452,13 @@ export class Processor {
         dueDate: addDays(issueDate, stage.dueDays ?? this.config.ghl.invoiceDueDays),
         liveMode: this.config.ghl.invoiceLiveMode,
         sentTo: { email: payload.client.email ? [payload.client.email] : [] },
+        paymentMethods: {
+          stripe: {
+            // Bank debit only means BECS in Australia, which Stripe caps at
+            // $3.50 rather than charging 1.7% of a five-figure instalment.
+            enableBankDebitOnly: stage.bankDebitOnly ?? this.config.ghl.invoiceBankDebitOnly,
+          },
+        },
       };
 
       let invoice;

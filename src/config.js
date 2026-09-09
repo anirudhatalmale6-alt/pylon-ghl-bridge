@@ -112,6 +112,11 @@ export const config = {
     invoiceDueDays: int(process.env.GHL_INVOICE_DUE_DAYS, 7),
     // Test-mode invoices in GHL when false.
     invoiceLiveMode: bool(process.env.GHL_INVOICE_LIVE_MODE, true),
+    // Offer ONLY bank debit (BECS in Australia) on invoices rather than card.
+    // Stripe AU charges 1.7% + $0.30 on a card but caps bank debit at $3.50, so
+    // on a five-figure contract this is the difference between ~$160 and $3.50.
+    // Per-stage `bankDebitOnly` in the mapping overrides this.
+    invoiceBankDebitOnly: bool(process.env.GHL_INVOICE_BANK_DEBIT_ONLY, false),
   },
 
   // Optional outbound "did it land?" callback. Every processed event POSTs a

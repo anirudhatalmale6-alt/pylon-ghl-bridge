@@ -826,3 +826,47 @@ test('payment stages that do not add up to 100% are reported', async (t) => {
   });
   assert.match(duped[0], /reuse the key/, 'duplicate keys break the bill-once guard');
 });
+
+test('each payment stage carries its own Stripe payment-method setting', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+  const opportunityId = h.bridge.store.get('oKcdQEqKvq962di').result.opportunityId;
+
+  await fetch(`${h.bridge.base}/invoices/pre_install`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${h.config.adminToken}` },
+    body: JSON.stringify({ opportunityId }),
+  });
+
+  const [deposit, preInstall] = h.ghl.findAll('POST', '/invoices/');
+
+  assert.equal(
+    deposit.body.paymentMethods.stripe.enableBankDebitOnly,
+    false,
+    'the deposit stays payable by card — it is small and wanted immediately',
+  );
+  assert.equal(
+    preInstall.body.paymentMethods.stripe.enableBankDebitOnly,
+    true,
+    'the 60% instalment is bank-debit only: Stripe AU caps bank debit at $3.50 but charges 1.7% on a card, which is ~$159 on $9,360',
+  );
+});
+
+test('the global bank-debit default applies to a stage that does not state one', async (t) => {
+  const h = await harness({ config: { ghl: { createInvoice: true, invoiceBankDebitOnly: true } } });
+  t.after(() => h.close());
+
+  // Drop the per-stage setting so the global default is what is under test.
+  const mapping = h.bridge.processor.mapping;
+  const stages = mapping.events['web_proposals.signed'].invoices.stages;
+  for (const stage of stages) delete stage.bankDebitOnly;
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const deposit = h.ghl.find('POST', '/invoices/');
+  assert.equal(deposit.body.paymentMethods.stripe.enableBankDebitOnly, true);
+});

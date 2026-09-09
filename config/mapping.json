@@ -2,7 +2,6 @@
   "version": 1,
   "description": "Pylon -> GoHighLevel field map. Edit the RIGHT-hand side to change where a value lands. Left-hand keys are GoHighLevel custom fields, referenced by field key, field name, or raw id. Run `npm run discover` to print every field available in your account.",
   "writeEmptyValues": false,
-
   "events": {
     "web_proposals.signed": {
       "contact": {
@@ -19,14 +18,15 @@
           "country": "{{client.address.country_code}}",
           "source": "Pylon - contract signed"
         },
-        "tags": ["contract-signed"],
+        "tags": [
+          "contract-signed"
+        ],
         "customFields": {
           "contact.pylon_project_reference": "{{project.reference_number}}",
           "contact.pylon_project_link": "{{project.in_app_url}}",
           "contact.signed_contract_pdf": "{{contract.signed_pdf_stored_url}}"
         }
       },
-
       "opportunity": {
         "name": "{{contract.name}} - {{client.address.line1 || client.name}}",
         "monetaryValue": "{{contract.total_amount}}",
@@ -40,7 +40,7 @@
           "opportunity.signed_by": "{{contract.signer_name || client.name}}",
           "opportunity.signed_by_email": "{{contract.signer_email || client.email}}",
           "opportunity.signed_contract_pdf": "{{contract.signed_pdf_stored_url}}",
-      "opportunity.signed_contract_file": "{{contract.signed_pdf_stored_url}}",
+          "opportunity.signed_contract_file": "{{contract.signed_pdf_stored_url}}",
           "opportunity.system_size_kw": "{{contract.system_size_kw}}",
           "opportunity.battery_storage_kwh": "{{contract.storage_kwh}}",
           "opportunity.deposit_amount": "{{contract.deposit_amount_formatted}}",
@@ -50,52 +50,54 @@
           "opportunity.web_proposal_link": "{{contract.proposal_web_url}}"
         }
       },
-
       "invoices": {
-      "currency": "{{contract.currency || 'AUD'}}",
-      "stages": [
-        {
-          "key": "deposit",
-          "label": "Deposit",
-          "percent": 10,
-          "trigger": "signed",
-          "dueDays": 7,
-          "name": "Deposit (10%) - {{project.reference_number}}",
-          "description": "10% deposit on signing. {{contract.description || contract.title}} — Pylon reference {{project.reference_number}}"
-        },
-        {
-          "key": "pre_install",
-          "label": "Pre-installation",
-          "percent": 60,
-          "trigger": "manual",
-          "dueDays": 7,
-          "name": "Pre-installation (60%) - {{project.reference_number}}",
-          "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}"
-        },
-        {
-          "key": "installation",
-          "label": "Installation day",
-          "percent": 10,
-          "trigger": "manual",
-          "dueDays": 0,
-          "name": "Installation (10%) - {{project.reference_number}}",
-          "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}"
-        }
-      ]
+        "currency": "{{contract.currency || 'AUD'}}",
+        "stages": [
+          {
+            "key": "deposit",
+            "label": "Deposit",
+            "percent": 10,
+            "trigger": "signed",
+            "dueDays": 7,
+            "name": "Deposit (10%) - {{project.reference_number}}",
+            "description": "10% deposit on signing. {{contract.description || contract.title}} \u2014 Pylon reference {{project.reference_number}}",
+            "bankDebitOnly": false
+          },
+          {
+            "key": "pre_install",
+            "label": "Pre-installation",
+            "percent": 60,
+            "trigger": "manual",
+            "dueDays": 7,
+            "name": "Pre-installation (60%) - {{project.reference_number}}",
+            "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}",
+            "bankDebitOnly": true
+          },
+          {
+            "key": "installation",
+            "label": "Installation day",
+            "percent": 10,
+            "trigger": "manual",
+            "dueDays": 0,
+            "name": "Installation (10%) - {{project.reference_number}}",
+            "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}",
+            "bankDebitOnly": false
+          }
+        ]
+      },
+      "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
     },
-    "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
-    },
-
     "gateway_payments.created": {
       "contact": {
         "standard": {
           "email": "{{client.email}}",
           "phone": "{{client.phone}}"
         },
-        "tags": ["payment-received"],
+        "tags": [
+          "payment-received"
+        ],
         "customFields": {}
       },
-
       "opportunity": {
         "monetaryValue": null,
         "status": null,
@@ -107,7 +109,6 @@
           "opportunity.payment_receipt_link": "{{payment.receipt_url}}"
         }
       },
-
       "note": "Payment received through Pylon on {{payment.received_at | date}}.\nType: {{payment.purpose_label}}\nAmount: {{payment.amount_formatted}}\nReceipt: {{payment.receipt_url}}\nPylon reference: {{project.reference_number}}"
     }
   }

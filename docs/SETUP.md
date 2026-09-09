@@ -110,6 +110,55 @@ with the admin token as an `Authorization` header. Then nobody has to remember.
 Calling it twice is safe — a stage that has already been invoiced returns the
 invoice that exists rather than billing the customer again.
 
+#### Getting paid — and what the card fee costs
+
+An invoice is *created* whether or not you have a payment provider connected.
+Stripe is what lets the customer click and pay it online.
+
+To connect it (any one of these routes):
+
+- **Payments** → **Integrations** tab → **Connect** on Stripe
+- **Settings** → **Integrations** → **Continue** on Stripe
+- **Launchpad** → **Ecommerce** → **Start Collecting Payments with Stripe**
+
+**Watch the fee on the big instalment.** Stripe's published Australian pricing:
+
+| Method | Fee |
+| --- | --- |
+| Domestic card | 1.7% + A$0.30 |
+| International card | 3.5% + A$0.30 |
+| BECS Direct Debit / PayTo | 1% + A$0.30, **capped at A$3.50** |
+
+On a $15,600 contract billed 10 / 60 / 10:
+
+| Stage | Amount | By card | By bank debit |
+| --- | --- | --- | --- |
+| Deposit | $1,560 | $26.82 | $3.50 |
+| Pre-installation | $9,360 | **$159.42** | $3.50 |
+| Installation day | $1,560 | $26.82 | $3.50 |
+| **Total** | | **$213.06** | **$10.50** |
+
+That is about **$200 per contract** in card fees, almost all of it on the 60%
+instalment.
+
+So each stage carries its own `bankDebitOnly` setting in `config/mapping.json`.
+It ships as:
+
+| Stage | `bankDebitOnly` | Why |
+| --- | --- | --- |
+| Deposit | `false` | small, and you want it cleared straight away |
+| Pre-installation | `true` | where the percentage fee actually hurts |
+| Installation day | `false` | small, and wanted on the day |
+
+`GHL_INVOICE_BANK_DEBIT_ONLY` sets the default for any stage that does not say.
+
+> Bank debit takes a few business days to clear, where a card is immediate.
+> That is the trade-off, and it is why the deposit is left on card.
+>
+> BECS has to be enabled on the Stripe account itself, and the GoHighLevel field
+> is the generic `enableBankDebitOnly` rather than a BECS-specific one. Confirm
+> with the first real invoice that the bank-debit option actually appears.
+
 #### Scopes
 
 `invoices.write` is **not** included in a Private Integration by default. Without
@@ -130,6 +179,7 @@ Everything else still lands — a signature never fails because of an invoice.
 | `GHL_INVOICE_DUE_DAYS` | `7` | fallback when a stage has no `dueDays` |
 | `GHL_INVOICE_LIVE_MODE` | `true` | `false` for GoHighLevel test-mode invoices |
 | `GHL_INVOICE_USER_ID` | — | who a send is recorded under; avoids needing `users.readonly` |
+| `GHL_INVOICE_BANK_DEBIT_ONLY` | `false` | default payment method for a stage with no `bankDebitOnly` of its own |
 
 Percentages, names, wording and due dates all live in the `invoices` section of
 `config/mapping.json` — see [FIELD-MAPPING.md](FIELD-MAPPING.md). Your business
