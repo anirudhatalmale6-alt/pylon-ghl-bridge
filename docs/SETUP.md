@@ -110,18 +110,36 @@ with the admin token as an `Authorization` header. Then nobody has to remember.
 Calling it twice is safe — a stage that has already been invoiced returns the
 invoice that exists rather than billing the customer again.
 
-#### Getting paid — and what the card fee costs
+#### Getting paid
 
-An invoice is *created* whether or not you have a payment provider connected.
-Stripe is what lets the customer click and pay it online.
+**You do not need Stripe.** The invoice is created either way — Stripe only adds
+a "pay now" button. On a bank-transfer business, leave it disconnected and put
+your account details on the invoice instead.
 
-To connect it (any one of these routes):
+That is what `invoices.termsNotes` in `config/mapping.json` is for. It is HTML,
+and it takes the same `{{...}}` templates as everything else:
+
+```json
+"termsNotes": "<p>Payment by bank transfer.</p><p>Account name: …<br>BSB: …<br>Account number: …<br>Reference: {{project.reference_number}}</p>"
+```
+
+Templating the Pylon reference in means an incoming transfer can be matched back
+to the job. **Fill in the real BSB and account number before going live** — the
+shipped file has placeholders.
+
+With no payment provider connected, no Stripe payment-method block is sent at
+all. Set `GHL_INVOICE_SEND_ACTION=email` if you want the customer to actually
+receive the invoice; the default leaves it as a draft.
+
+#### If you ever do connect Stripe
+
+Any one of these routes:
 
 - **Payments** → **Integrations** tab → **Connect** on Stripe
 - **Settings** → **Integrations** → **Continue** on Stripe
 - **Launchpad** → **Ecommerce** → **Start Collecting Payments with Stripe**
 
-**Watch the fee on the big instalment.** Stripe's published Australian pricing:
+Stripe's published Australian rates:
 
 | Method | Fee |
 | --- | --- |
@@ -129,35 +147,25 @@ To connect it (any one of these routes):
 | International card | 3.5% + A$0.30 |
 | BECS Direct Debit / PayTo | 1% + A$0.30, **capped at A$3.50** |
 
-On a $15,600 contract billed 10 / 60 / 10:
+On a $15,600 contract billed 10 / 60 / 10 that is **$213.06** by card against
+**$10.50** by bank debit — $159 of the difference sits on the 60% instalment
+alone.
 
-| Stage | Amount | By card | By bank debit |
-| --- | --- | --- | --- |
-| Deposit | $1,560 | $26.82 | $3.50 |
-| Pre-installation | $9,360 | **$159.42** | $3.50 |
-| Installation day | $1,560 | $26.82 | $3.50 |
-| **Total** | | **$213.06** | **$10.50** |
+Each stage can carry `bankDebitOnly` in `config/mapping.json` to force the
+cheaper method, and `GHL_INVOICE_BANK_DEBIT_ONLY` sets a default. Neither is set
+by default, because unset is the honest value for a business with no Stripe
+account.
 
-That is about **$200 per contract** in card fees, almost all of it on the 60%
-instalment.
+#### Surcharging is not a way out
 
-So each stage carries its own `bankDebitOnly` setting in `config/mapping.json`.
-It ships as:
+From **1 October 2026** the RBA is removing its prohibition on 'no-surcharge'
+rules, and eftpos, Mastercard, Visa and American Express are all banning card
+surcharging — prepaid, debit and credit. After that date card fees can only be
+recovered by building them into your prices, not added at checkout.
 
-| Stage | `bankDebitOnly` | Why |
-| --- | --- | --- |
-| Deposit | `false` | small, and you want it cleared straight away |
-| Pre-installation | `true` | where the percentage fee actually hurts |
-| Installation day | `false` | small, and wanted on the day |
-
-`GHL_INVOICE_BANK_DEBIT_ONLY` sets the default for any stage that does not say.
-
-> Bank debit takes a few business days to clear, where a card is immediate.
-> That is the trade-off, and it is why the deposit is left on card.
->
-> BECS has to be enabled on the Stripe account itself, and the GoHighLevel field
-> is the generic `enableBankDebitOnly` rather than a BECS-specific one. Confirm
-> with the first real invoice that the bank-debit option actually appears.
+Bank transfer, direct debit and BECS sit outside that framework, and businesses
+may still offer a **discount** for paying by a cheaper method. That is the
+supported way to steer customers off cards.
 
 #### Scopes
 

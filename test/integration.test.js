@@ -827,9 +827,44 @@ test('payment stages that do not add up to 100% are reported', async (t) => {
   assert.match(duped[0], /reuse the key/, 'duplicate keys break the bill-once guard');
 });
 
-test('each payment stage carries its own Stripe payment-method setting', async (t) => {
+test('no Stripe payment-method block is sent when none is configured', async (t) => {
   const h = await harness({ config: INVOICING_ON });
   t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const deposit = h.ghl.find('POST', '/invoices/');
+  assert.equal(
+    deposit.body.paymentMethods,
+    undefined,
+    'a business taking bank transfers has no Stripe account, so posting a Stripe preference would be noise',
+  );
+});
+
+test('an invoice carries the bank details so the customer knows where to pay', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const deposit = h.ghl.find('POST', '/invoices/');
+  assert.match(deposit.body.termsNotes, /bank transfer/i);
+  assert.match(
+    deposit.body.termsNotes,
+    /PYL-0003-7789/,
+    'the Pylon reference is templated in, so an incoming transfer can be matched to the job',
+  );
+});
+
+test('each payment stage can still choose card or bank debit when Stripe is used', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  const stages = h.bridge.processor.mapping.events['web_proposals.signed'].invoices.stages;
+  stages.find((s) => s.key === 'deposit').bankDebitOnly = false;
+  stages.find((s) => s.key === 'pre_install').bankDebitOnly = true;
 
   await postWebhook(h.bridge.base, readFixture('event-signed.json'));
   await h.bridge.queue.onIdle();
@@ -842,16 +877,11 @@ test('each payment stage carries its own Stripe payment-method setting', async (
   });
 
   const [deposit, preInstall] = h.ghl.findAll('POST', '/invoices/');
-
-  assert.equal(
-    deposit.body.paymentMethods.stripe.enableBankDebitOnly,
-    false,
-    'the deposit stays payable by card — it is small and wanted immediately',
-  );
+  assert.equal(deposit.body.paymentMethods.stripe.enableBankDebitOnly, false);
   assert.equal(
     preInstall.body.paymentMethods.stripe.enableBankDebitOnly,
     true,
-    'the 60% instalment is bank-debit only: Stripe AU caps bank debit at $3.50 but charges 1.7% on a card, which is ~$159 on $9,360',
+    'Stripe AU caps bank debit at $3.50 but charges 1.7% on a card — ~$159 on $9,360',
   );
 });
 

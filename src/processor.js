@@ -452,14 +452,22 @@ export class Processor {
         dueDate: addDays(issueDate, stage.dueDays ?? this.config.ghl.invoiceDueDays),
         liveMode: this.config.ghl.invoiceLiveMode,
         sentTo: { email: payload.client.email ? [payload.client.email] : [] },
-        paymentMethods: {
-          stripe: {
-            // Bank debit only means BECS in Australia, which Stripe caps at
-            // $3.50 rather than charging 1.7% of a five-figure instalment.
-            enableBankDebitOnly: stage.bankDebitOnly ?? this.config.ghl.invoiceBankDebitOnly,
-          },
-        },
       };
+
+      // How to pay. On a bank-transfer business this is the only thing telling
+      // the customer where to send the money, so it matters more than usual.
+      const terms = render(stage.termsNotes ?? section.termsNotes, payload);
+      if (terms) invoiceBody.termsNotes = terms;
+
+      // Only sent when a card/bank-debit preference is actually configured.
+      // A business taking bank transfers has no Stripe account, and posting a
+      // Stripe payment-method block for one would be noise at best.
+      const bankDebitOnly = stage.bankDebitOnly ?? this.config.ghl.invoiceBankDebitOnly;
+      if (bankDebitOnly !== null && bankDebitOnly !== undefined) {
+        // Bank debit only means BECS in Australia, which Stripe caps at $3.50
+        // rather than charging 1.7% of a five-figure instalment.
+        invoiceBody.paymentMethods = { stripe: { enableBankDebitOnly: bankDebitOnly } };
+      }
 
       let invoice;
       try {

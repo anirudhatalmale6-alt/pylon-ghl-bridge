@@ -51,6 +51,7 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       invoiceUserId: '',
       invoiceDueDays: 7,
       invoiceLiveMode: true,
+      invoiceBankDebitOnly: undefined,
       ...(overrides.ghl ?? {}),
     },
     callback: { url: '', secret: '', timeoutMs: 2000 },

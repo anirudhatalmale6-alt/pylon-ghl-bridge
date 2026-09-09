@@ -37,6 +37,12 @@ function bool(value, fallback = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
+/** Like bool(), but stays undefined when the variable is not set at all. */
+function optionalBool(value) {
+  if (value === undefined || value === '') return undefined;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
 function int(value, fallback) {
   const parsed = Number.parseInt(value ?? '', 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -116,7 +122,11 @@ export const config = {
     // Stripe AU charges 1.7% + $0.30 on a card but caps bank debit at $3.50, so
     // on a five-figure contract this is the difference between ~$160 and $3.50.
     // Per-stage `bankDebitOnly` in the mapping overrides this.
-    invoiceBankDebitOnly: bool(process.env.GHL_INVOICE_BANK_DEBIT_ONLY, false),
+    //
+    // Deliberately TRI-STATE: undefined when unset, so no Stripe payment-method
+    // block is sent at all. A business taking bank transfers has no Stripe
+    // account, and `false` is a preference where "unset" is the honest value.
+    invoiceBankDebitOnly: optionalBool(process.env.GHL_INVOICE_BANK_DEBIT_ONLY),
   },
 
   // Optional outbound "did it land?" callback. Every processed event POSTs a

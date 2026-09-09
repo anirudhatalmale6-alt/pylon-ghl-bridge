@@ -101,6 +101,10 @@ billed. Each stage becomes one GoHighLevel invoice:
 | `dueDays` | days from the invoice being raised to its due date. `0` means due immediately. |
 | `name`, `description` | templates, same syntax as everywhere else. |
 
+`invoices.termsNotes` (HTML, templated) is printed on every invoice — this is
+where bank-transfer details go when no payment provider is connected. A stage
+may override it with its own `termsNotes`.
+
 **The percentages are checked.** If the stages do not add up to 100% the bridge
 says so at startup and on `GET /health`, with the shortfall in dollars. It does
 not stop — a business may invoice part of a job elsewhere — but it will not

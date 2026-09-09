@@ -60,8 +60,7 @@
             "trigger": "signed",
             "dueDays": 7,
             "name": "Deposit (10%) - {{project.reference_number}}",
-            "description": "10% deposit on signing. {{contract.description || contract.title}} \u2014 Pylon reference {{project.reference_number}}",
-            "bankDebitOnly": false
+            "description": "10% deposit on signing. {{contract.description || contract.title}} \u2014 Pylon reference {{project.reference_number}}"
           },
           {
             "key": "pre_install",
@@ -70,8 +69,7 @@
             "trigger": "manual",
             "dueDays": 7,
             "name": "Pre-installation (60%) - {{project.reference_number}}",
-            "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}",
-            "bankDebitOnly": true
+            "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}"
           },
           {
             "key": "installation",
@@ -80,10 +78,10 @@
             "trigger": "manual",
             "dueDays": 0,
             "name": "Installation (10%) - {{project.reference_number}}",
-            "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}",
-            "bankDebitOnly": false
+            "description": "10% payable on the day of installation. Pylon reference {{project.reference_number}}"
           }
-        ]
+        ],
+        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: Inspire Energy<br>BSB: <em>your BSB</em><br>Account number: <em>your account number</em><br>Reference: {{project.reference_number}}</p><p>Please quote the reference above so we can match your payment.</p>"
       },
       "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
     },
