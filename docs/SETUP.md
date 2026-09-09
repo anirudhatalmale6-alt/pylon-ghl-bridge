@@ -139,9 +139,9 @@ Stripe's published Australian rates:
 | International card | 3.5% + A$0.30 |
 | BECS Direct Debit / PayTo | 1% + A$0.30, **capped at A$3.50** |
 
-On a $15,600 contract billed 10 / 60 / 10 that is **$213.06** by card against
-**$10.50** by bank debit — $159 of the difference sits on the 60% instalment
-alone.
+On a $15,600 contract billed 10 / 60 / balance that is **$213.06** by card
+against **$10.50** by bank debit — $159 of the difference sits on the 60%
+instalment alone.
 
 Each stage can carry `bankDebitOnly` in `config/mapping.json` to force the
 cheaper method, and `GHL_INVOICE_BANK_DEBIT_ONLY` sets a default. Neither is set
@@ -179,7 +179,7 @@ Everything else still lands — a signature never fails because of an invoice.
 | `GHL_INVOICE_DUE_DAYS` | `7` | fallback when a stage has no `dueDays` |
 | `GHL_INVOICE_LIVE_MODE` | `true` | `false` for GoHighLevel test-mode invoices |
 | `GHL_INVOICE_USER_ID` | — | who a send is recorded under; avoids needing `users.readonly` |
-| `GHL_INVOICE_BANK_DEBIT_ONLY` | `false` | default payment method for a stage with no `bankDebitOnly` of its own |
+| `GHL_INVOICE_BANK_DEBIT_ONLY` | *unset* | default payment method for a stage with no `bankDebitOnly` of its own. Left unset means no Stripe payment-method block is sent at all. |
 
 Percentages, names, wording and due dates all live in the `invoices` section of
 `config/mapping.json` — see [FIELD-MAPPING.md](FIELD-MAPPING.md). Your business
