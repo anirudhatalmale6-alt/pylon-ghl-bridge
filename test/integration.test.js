@@ -71,7 +71,7 @@ test('a signed contract lands in GoHighLevel end to end', async (t) => {
   assert.equal(upsert.body.firstName, 'Andre');
   assert.equal(upsert.body.lastName, 'Rieu');
   assert.equal(upsert.body.email, 'andre@example.com');
-  assert.equal(upsert.body.phone, '0400 000 000');
+  assert.equal(upsert.body.phone, '0417 522 630');
   assert.equal(upsert.body.address1, '19 Parmesan Avenue');
   assert.equal(upsert.body.postalCode, '3147');
   assert.equal(upsert.body.country, 'AU');
@@ -1154,4 +1154,63 @@ test('the service starts without a webhook secret, and rejects every webhook', a
 
   const health = await fetch(`${h.bridge.base}/health`);
   assert.equal(health.status, 200, 'health stays green so the host does not kill the deploy');
+});
+
+test('an Australian local phone is converted to E.164 for the invoice', async (t) => {
+  const { toE164 } = await import('../src/normalize.js');
+
+  // Every customer phone in the live Pylon account looks like this, so without
+  // the conversion every single invoice fails with:
+  //   contactDetails.Phone number must be in E.164 format (e.g., +1234567890)
+  assert.equal(toE164('0417522630', 'AU'), '+61417522630');
+  assert.equal(toE164('0400 405 964', 'AU'), '+61400405964', 'spaces and all');
+  assert.equal(toE164('02 4623 2134', 'AU'), '+61246232134', 'landlines too');
+  assert.equal(toE164('+61417522630', 'AU'), '+61417522630', 'already international, left alone');
+  assert.equal(toE164('0061417522630', 'AU'), '+61417522630', 'the 00 access prefix');
+  assert.equal(toE164('0211234567', 'NZ'), '+64211234567', 'not hardcoded to Australia');
+
+  // Refuses rather than inventing a number.
+  assert.equal(toE164('0417522630', 'ZZ'), null, 'unknown country: guessing a dialling code invents a number');
+  assert.equal(toE164('0417522630', ''), null);
+  assert.equal(toE164('123', 'AU'), null, 'too short to be a real number');
+  assert.equal(toE164('', 'AU'), null);
+  assert.equal(toE164(null, 'AU'), null);
+});
+
+test('the invoice carries the E.164 phone, the contact keeps the local one', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.deepEqual(record.result.warnings, [], 'the invoice must not 422 on the phone format');
+
+  assert.equal(
+    h.ghl.find('POST', '/invoices/').body.contactDetails.phoneNo,
+    '+61417522630',
+    'the invoice API insists on E.164',
+  );
+  assert.equal(
+    h.ghl.find('POST', '/contacts/upsert').body.phone,
+    '0417 522 630',
+    'the contact keeps the number as the business wrote it — GoHighLevel accepts it there',
+  );
+});
+
+test('an unconvertible phone omits the field rather than losing the invoice', async (t) => {
+  const h = await harness({
+    config: INVOICING_ON,
+    pylon: { projectOverrides: { customer_details: { name: 'No Phone', email: 'nophone@example.com', phone: 'ask reception' } } },
+  });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const invoice = h.ghl.find('POST', '/invoices/');
+  assert.ok(invoice, 'the invoice is still raised');
+  assert.equal(invoice.body.contactDetails.phoneNo, undefined, 'a blank line beats a 422 that loses the whole invoice');
+  assert.deepEqual(h.bridge.store.get('oKcdQEqKvq962di').result.warnings, []);
 });

@@ -1,6 +1,6 @@
 import { IntegrationError } from './lib/errors.js';
 import { logger } from './lib/logger.js';
-import { eventRelationships, normalizePaymentEvent, normalizeSignedEvent } from './normalize.js';
+import { eventRelationships, normalizePaymentEvent, normalizeSignedEvent, toE164 } from './normalize.js';
 import { buildCustomFields, cleanCustomFields, indexCustomFields, render, renderObject, toIsoDate } from './mapping.js';
 
 export const SIGNED_EVENT = 'web_proposals.signed';
@@ -446,6 +446,7 @@ export class Processor {
 
       const issueDate = toIsoDate(new Date().toISOString());
       const currency = render(section.currency, payload) || payload.contract.currency || 'AUD';
+      const invoicePhone = toE164(payload.client.phone, payload.client.address?.country_code || payload.project.country_code);
       const invoiceBody = {
         name: render(stage.name, payload) || `${stage.label ?? stage.key} - ${payload.project.reference_number ?? ''}`.trim(),
         currency,
@@ -454,7 +455,10 @@ export class Processor {
           id: contactId,
           name: payload.client.name,
           email: payload.client.email,
-          phoneNo: payload.client.phone,
+          // The invoice API rejects anything that is not E.164. Omitted entirely
+          // when it cannot be converted — a blank line beats a wrong number, and
+          // beats a 422 that loses the whole invoice.
+          ...(invoicePhone ? { phoneNo: invoicePhone } : {}),
         },
         items: [
           {

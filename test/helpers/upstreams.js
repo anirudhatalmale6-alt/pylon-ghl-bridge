@@ -199,6 +199,11 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
       // A fake that accepts anything hides the bug by construction — both of
       // these shipped green against a permissive stand-in.
       const errors = [];
+      // Copied from the live API, which rejected every Australian local number.
+      const phone = body?.contactDetails?.phoneNo;
+      if (phone !== undefined && !/^\+[1-9]\d{7,14}$/.test(String(phone))) {
+        errors.push('contactDetails.Phone number must be in E.164 format (e.g., +1234567890)');
+      }
       if (body?.businessDetails?.address !== undefined && typeof body.businessDetails.address !== 'object') {
         errors.push('businessDetails.address.each value in nested property address must be either object or array');
       }

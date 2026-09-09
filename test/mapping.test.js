@@ -29,7 +29,7 @@ test('client details come from the signer, falling back to the project record', 
   assert.equal(payload.client.first_name, 'Andre');
   assert.equal(payload.client.last_name, 'Rieu');
   assert.equal(payload.client.email, 'andre@example.com');
-  assert.equal(payload.client.phone, '0400 000 000');
+  assert.equal(payload.client.phone, '0417 522 630');
   assert.equal(payload.client.address.full, '19 Parmesan Avenue, Glen Iris, Victoria, 3147');
   assert.equal(payload.client.address.country_code, 'AU');
 });

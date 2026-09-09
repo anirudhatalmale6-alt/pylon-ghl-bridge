@@ -4,7 +4,10 @@
     "id": "rukSigcyTR",
     "attributes": {
       "reference_number": "PYL-0003-7789",
-      "site_location": [145.0709934, -37.8510383],
+      "site_location": [
+        145.0709934,
+        -37.8510383
+      ],
       "site_country_code": "AU",
       "site_address": {
         "line1": "19 Parmesan Avenue",
@@ -16,7 +19,7 @@
       },
       "customer_details": {
         "name": "Andre Rieu",
-        "phone": "0400 000 000",
+        "phone": "0417 522 630",
         "email": "andre@example.com"
       },
       "site_details": {
@@ -45,10 +48,27 @@
       "updated_at": "2026-08-25T02:10:00+00:00"
     },
     "relationships": {
-      "owner": { "data": { "type": "users", "id": "HOx60SiRAB" } },
-      "primary_design": { "data": { "type": "solar_designs", "id": "RnlPy9NMNr" } },
-      "latest_signed_design": { "data": { "type": "solar_designs", "id": "RnlPy9NMNr" } }
+      "owner": {
+        "data": {
+          "type": "users",
+          "id": "HOx60SiRAB"
+        }
+      },
+      "primary_design": {
+        "data": {
+          "type": "solar_designs",
+          "id": "RnlPy9NMNr"
+        }
+      },
+      "latest_signed_design": {
+        "data": {
+          "type": "solar_designs",
+          "id": "RnlPy9NMNr"
+        }
+      }
     },
-    "links": { "self": "https://api.getpylon.com/v1/solar_projects/rukSigcyTR" }
+    "links": {
+      "self": "https://api.getpylon.com/v1/solar_projects/rukSigcyTR"
+    }
   }
 }

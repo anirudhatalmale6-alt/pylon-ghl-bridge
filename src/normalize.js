@@ -69,6 +69,49 @@ function clientFrom(project, eventAttrs = {}) {
   };
 }
 
+/**
+ * Converts a phone number to E.164 (+<country><number>), which the GoHighLevel
+ * INVOICE api insists on:
+ *   422 "contactDetails.Phone number must be in E.164 format (e.g., +1234567890)"
+ *
+ * Contacts accept a local number happily; invoices do not. Every customer phone
+ * in the live Pylon account is an Australian local number like "0417522630", so
+ * without this every single invoice fails.
+ *
+ * Returns null when the number cannot be converted confidently — the caller
+ * omits the field rather than sending something wrong. A missing phone on an
+ * invoice is a blank line; a wrong one is a wrong invoice.
+ */
+const DIALLING_CODES = { AU: '61', NZ: '64', GB: '44', IE: '353', US: '1', CA: '1', ZA: '27', SG: '65' };
+
+export function toE164(raw, countryCode) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+
+  // Already international.
+  if (text.startsWith('+')) {
+    const digits = text.slice(1).replace(/\D/g, '');
+    return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : null;
+  }
+
+  let digits = text.replace(/\D/g, '');
+  if (!digits) return null;
+
+  // 00 is the international access prefix in most of the world.
+  if (digits.startsWith('00')) {
+    const rest = digits.slice(2);
+    return rest.length >= 8 && rest.length <= 15 ? `+${rest}` : null;
+  }
+
+  const dial = DIALLING_CODES[String(countryCode ?? '').toUpperCase()];
+  if (!dial) return null; // unknown country: guessing a dialling code invents a number
+
+  // A leading 0 is the national trunk prefix and is dropped when going international.
+  const national = digits.startsWith('0') ? digits.slice(1) : digits;
+  const full = `${dial}${national}`;
+  return full.length >= 8 && full.length <= 15 ? `+${full}` : null;
+}
+
 export function splitName(fullName) {
   const clean = String(fullName || '').trim().replace(/\s+/g, ' ');
   if (!clean) return { firstName: '', lastName: '' };
