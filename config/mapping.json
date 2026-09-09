@@ -81,7 +81,7 @@
             "remainder": true
           }
         ],
-        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: Inspire Energy<br>BSB: <em>your BSB</em><br>Account number: <em>your account number</em><br>Reference: {{project.reference_number}}</p><p>Please quote the reference above so we can match your payment.</p>"
+        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: {{env.BANK_NAME}}<br>BSB: {{env.BANK_BSB}}<br>Account number: {{env.BANK_ACCOUNT}}<br>Reference: {{project.reference_number}}</p><p>Please quote the reference above so we can match your payment.</p>"
       },
       "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
     },

@@ -974,3 +974,69 @@ test('the global bank-debit default applies to a stage that does not state one',
   const deposit = h.ghl.find('POST', '/invoices/');
   assert.equal(deposit.body.paymentMethods.stripe.enableBankDebitOnly, true);
 });
+
+test('a mapping template can read TPL_ values from the environment', async (t) => {
+  const { templateEnv, render } = await import('../src/mapping.js');
+
+  assert.deepEqual(
+    templateEnv({ TPL_BANK_BSB: '000-000', TPL_BANK_ACCOUNT: '12345678' }),
+    { BANK_BSB: '000-000', BANK_ACCOUNT: '12345678' },
+    'the TPL_ prefix is stripped so the mapping reads {{env.BANK_BSB}}',
+  );
+
+  // A deliberately fake BSB — a real one has no business in a public repo,
+  // which is the whole reason this mechanism exists.
+  process.env.TPL_TEST_BANK_BSB = '000-000';
+  t.after(() => { delete process.env.TPL_TEST_BANK_BSB; });
+  assert.equal(render('BSB: {{env.TEST_BANK_BSB}}', {}), 'BSB: 000-000');
+});
+
+test('control: the mapping cannot read a credential out of the environment', async (t) => {
+  const { templateEnv, render } = await import('../src/mapping.js');
+
+  // The exact mistake this guards against: a mapping file writes into customer
+  // records, so an unfiltered {{env.X}} would publish a token into the CRM.
+  assert.deepEqual(
+    templateEnv({ GHL_API_TOKEN: 'pit-secret', PYLON_API_TOKEN: 'pyl-secret', ADMIN_TOKEN: 'admin' }),
+    {},
+    'nothing without the TPL_ prefix is exposed, whatever it is called',
+  );
+
+  // undefined, not the token — and the engine treats undefined as empty, so the
+  // CRM field is skipped rather than written with anything.
+  const leaked = render('{{env.GHL_API_TOKEN}}', {});
+  assert.ok(leaked === undefined || leaked === '', `expected nothing, got ${JSON.stringify(leaked)}`);
+  assert.equal(render('Token is {{env.GHL_API_TOKEN}}', {}), 'Token is', 'nor inside a larger string');
+});
+
+test('the invoice terms carry the bank details from the environment', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  process.env.TPL_BANK_NAME = 'Test Energy Pty Ltd';
+  process.env.TPL_BANK_BSB = '111-222';
+  process.env.TPL_BANK_ACCOUNT = '99887766';
+  t.after(() => {
+    delete process.env.TPL_BANK_NAME;
+    delete process.env.TPL_BANK_BSB;
+    delete process.env.TPL_BANK_ACCOUNT;
+  });
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const terms = h.ghl.find('POST', '/invoices/').body.termsNotes;
+  assert.match(terms, /Test Energy Pty Ltd/);
+  assert.match(terms, /111-222/);
+  assert.match(terms, /99887766/);
+  assert.match(terms, /PYL-0003-7789/, 'plus the job reference, so a transfer can be matched');
+});
+
+test('the shipped mapping keeps bank details out of the repo', async (t) => {
+  const fs = await import('node:fs');
+  const raw = fs.readFileSync(new URL('../config/mapping.json', import.meta.url), 'utf8');
+
+  assert.match(raw, /\{\{env\.BANK_BSB\}\}/, 'the committed file references the value, it does not contain it');
+  assert.doesNotMatch(raw, /\d{3}-\d{3}/, 'no BSB-shaped string is committed');
+  assert.doesNotMatch(raw, /\b\d{8,}\b/, 'no account-number-shaped string is committed');
+});

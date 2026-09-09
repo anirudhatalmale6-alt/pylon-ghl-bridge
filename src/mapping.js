@@ -36,8 +36,32 @@ export function toIsoDate(value) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Values a mapping template may read from the environment, as {{env.NAME}}.
+ *
+ * ONLY variables named TPL_* are visible, and the prefix is stripped, so
+ * `{{env.BANK_BSB}}` reads TPL_BANK_BSB. This is deliberate: the mapping file
+ * writes into CRM fields, and without a whitelist a typo like {{env.GHL_API_TOKEN}}
+ * would publish the token into a customer record. A dedicated prefix means
+ * nothing is exposed unless somebody named it for exposure.
+ *
+ * It exists so things that should not sit in a public repo — bank details, for
+ * one — can be referenced by the mapping while living only in .env.
+ */
+export function templateEnv(env = process.env) {
+  const exposed = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key.startsWith('TPL_')) exposed[key.slice(4)] = value;
+  }
+  return exposed;
+}
+
 export function getPath(source, dotted) {
   if (!dotted) return undefined;
+  if (dotted === 'env' || dotted.startsWith('env.')) {
+    const name = dotted.slice(4);
+    return name ? templateEnv()[name] : undefined;
+  }
   let current = source;
   for (const segment of dotted.split('.')) {
     if (current === null || current === undefined) return undefined;

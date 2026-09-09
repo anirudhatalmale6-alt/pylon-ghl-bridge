@@ -116,8 +116,19 @@ and it takes the same `{{...}}` templates as everything else:
 ```
 
 Templating the Pylon reference in means an incoming transfer can be matched back
-to the job. **Fill in the real BSB and account number before going live** — the
-shipped file has placeholders.
+to the job.
+
+The bank details themselves live in `.env`, not in `config/mapping.json`, so they
+are never committed:
+
+```
+TPL_BANK_NAME=Your Company Pty Ltd
+TPL_BANK_BSB=000-000
+TPL_BANK_ACCOUNT=00000000
+```
+
+Only `TPL_*` variables are readable from the mapping, so a mistyped
+`{{env.GHL_API_TOKEN}}` cannot write a credential into a customer record.
 
 With no payment provider connected, no Stripe payment-method block is sent at
 all. Set `GHL_INVOICE_SEND_ACTION=email` if you want the customer to actually

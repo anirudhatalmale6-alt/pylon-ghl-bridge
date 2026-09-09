@@ -106,6 +106,28 @@ billed. Each stage becomes one GoHighLevel invoice:
 where bank-transfer details go when no payment provider is connected. A stage
 may override it with its own `termsNotes`.
 
+#### Keeping bank details out of the repo
+
+`{{env.NAME}}` reads a value from the environment instead of from this file, so
+account details never get committed:
+
+```json
+"termsNotes": "<p>Account name: {{env.BANK_NAME}}<br>BSB: {{env.BANK_BSB}}<br>Account number: {{env.BANK_ACCOUNT}}<br>Reference: {{project.reference_number}}</p>"
+```
+
+with the real values in `.env`, which is gitignored:
+
+```
+TPL_BANK_NAME=Your Company Pty Ltd
+TPL_BANK_BSB=000-000
+TPL_BANK_ACCOUNT=00000000
+```
+
+**Only variables named `TPL_*` are visible**, with the prefix stripped. That is a
+deliberate whitelist: this file writes into customer records, so an unfiltered
+`{{env.…}}` would let a mistyped `{{env.GHL_API_TOKEN}}` publish a credential
+into the CRM. Anything not named `TPL_` renders as empty.
+
 **The percentages are checked.** If the stages do not add up to 100% the bridge
 says so at startup and on `GET /health`, with the shortfall in dollars. A
 `remainder` stage makes the total 100% by construction, so there is nothing to
