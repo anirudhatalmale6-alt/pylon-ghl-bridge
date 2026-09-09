@@ -1096,3 +1096,30 @@ test('an ABN is printed when set, and leaves no empty label when not', async (t)
   const terms = without.ghl.find('POST', '/invoices/').body.termsNotes;
   assert.doesNotMatch(terms, /ABN/, 'no dangling "ABN:" label when there is no ABN to print');
 });
+
+test('a lower-case currency from Pylon is upper-cased for GoHighLevel', async (t) => {
+  const { render } = await import('../src/mapping.js');
+  const fs = await import('node:fs');
+  const mapping = JSON.parse(fs.readFileSync(new URL('../config/mapping.json', import.meta.url), 'utf8'));
+  const invoices = mapping.events['web_proposals.signed'].invoices;
+
+  // The live Pylon account returns "aud", not "AUD".
+  assert.equal(render(invoices.currency, { contract: { currency: 'aud' } }), 'AUD');
+  assert.equal(render(invoices.currency, { contract: { currency: '' } }), 'AUD', 'and the fallback is still upper case');
+});
+
+test('an empty Pylon reference number falls back to the project id', async (t) => {
+  const { render } = await import('../src/mapping.js');
+  const fs = await import('node:fs');
+  const mapping = JSON.parse(fs.readFileSync(new URL('../config/mapping.json', import.meta.url), 'utf8'));
+  const terms = mapping.events['web_proposals.signed'].invoices.termsNotes;
+
+  // Every project in the live account has an empty reference_number, so without
+  // a fallback the payment reference on the invoice would be blank and an
+  // incoming transfer could not be matched to a job.
+  const rendered = render(terms, { project: { reference_number: '', id: '1mX7DYluA' } });
+  assert.match(rendered, /Reference: 1mX7DYluA/);
+
+  const withRef = render(terms, { project: { reference_number: 'PYL-1', id: '1mX7DYluA' } });
+  assert.match(withRef, /Reference: PYL-1/, 'a real reference still wins');
+});

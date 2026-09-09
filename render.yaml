@@ -1,0 +1,88 @@
+# Render Blueprint. In Render: New > Blueprint, point it at this repo, and it
+# will prompt for the values marked `sync: false` (the secrets — those are never
+# committed).
+#
+# WHY NOT THE FREE PLAN:
+#
+#   1. Free web services spin down after 15 minutes idle and take about a minute
+#      to wake. Pylon gives a webhook 10 SECONDS before it times out, so the
+#      first signature after a quiet spell would fail. Pylon does retry (5 times
+#      over ~31 hours) so it would land eventually, but a contract could sit
+#      outside the CRM for hours.
+#
+#   2. Free instances have an ephemeral filesystem and cannot have a disk. This
+#      service keeps a small record of which GoHighLevel contact, opportunity
+#      and invoices each Pylon project produced. Losing it means the 60% and
+#      final invoices can no longer find their job — and, worse, the guard that
+#      stops a payment stage being invoiced twice is gone with it.
+#
+# A paid instance fixes both: no spin-down, and a disk it can keep state on.
+
+services:
+  - type: web
+    name: pylon-ghl-bridge
+    runtime: node
+    plan: starter
+    region: singapore # closest Render region to Australia
+    branch: main
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /health
+
+    disk:
+      name: bridge-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+
+      # --- GoHighLevel ----------------------------------------------------
+      - key: GHL_LOCATION_ID
+        sync: false
+      - key: GHL_API_TOKEN
+        sync: false
+      - key: GHL_PIPELINE_NAME
+        value: Inspire Sales Leads
+      - key: GHL_SIGNED_STAGE_NAME
+        value: Contract Signed - Ready for finial approval
+      - key: GHL_STATUS_ON_SIGNED
+        value: open
+
+      # --- Pylon ----------------------------------------------------------
+      - key: PYLON_API_TOKEN
+        sync: false
+      # Created when the webhook destination is added in Pylon, which needs this
+      # service's URL — so it is filled in on a second pass.
+      - key: PYLON_WEBHOOK_SECRET
+        sync: false
+
+      # --- Invoicing ------------------------------------------------------
+      - key: GHL_CREATE_INVOICE
+        value: "true"
+      - key: GHL_INVOICE_SEND_ACTION
+        value: none
+      - key: GHL_INVOICE_DUE_DAYS
+        value: "7"
+
+      # --- Values the invoice template reads (never committed) -------------
+      - key: TPL_BANK_NAME
+        sync: false
+      - key: TPL_BANK_BSB
+        sync: false
+      - key: TPL_BANK_ACCOUNT
+        sync: false
+      - key: TPL_BUSINESS_NAME
+        sync: false
+      - key: TPL_BUSINESS_ABN
+        sync: false
+
+      # --- Admin ----------------------------------------------------------
+      # Guards /events, /mapping, the deep health check, and the endpoints that
+      # raise the 60% and final invoices. Anyone holding this can bill a
+      # customer, so treat it as a password.
+      - key: ADMIN_TOKEN
+        sync: false

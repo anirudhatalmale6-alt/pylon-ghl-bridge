@@ -261,14 +261,29 @@ Nothing is renamed or deleted; existing fields are left alone. If you would
 rather create the fields by hand in the CRM, do that and then point
 `config/mapping.json` at your names — see [FIELD-MAPPING.md](FIELD-MAPPING.md).
 
-## 6. Start it
+## 6. Deploy it
 
-```bash
-npm start
-```
+The repo carries a `render.yaml` blueprint. In Render: **New → Blueprint**,
+point it at the repo, and it prompts for the secrets (everything marked
+`sync: false` — those are never committed).
 
-It must be reachable from the public internet over HTTPS. Put it behind nginx,
-Caddy, or deploy to any Node host.
+**Do not use the Free plan for this.** Two reasons, both real:
+
+1. Free services **spin down after 15 minutes** idle and take about a minute to
+   wake. Pylon allows a webhook **10 seconds**. The first signature after a
+   quiet spell would time out. Pylon retries 5 times over ~31 hours so it would
+   land eventually, but a signed contract could sit outside the CRM for hours.
+2. Free instances have an **ephemeral filesystem** and cannot have a disk. This
+   service keeps a small record of which contact, opportunity and invoices each
+   Pylon project produced. Lose it and the 60% and final invoices can no longer
+   find their job — and the guard that stops a stage being invoiced **twice**
+   goes with it.
+
+The blueprint therefore asks for a paid instance and a 1 GB disk mounted at
+`/var/data`, with `DATA_DIR` pointed at it.
+
+Alternatively run it anywhere that can host Node 20+: `npm ci --omit=dev`,
+`npm start`, behind nginx or Caddy for TLS.
 
 ## 7. Pylon — webhook destination
 

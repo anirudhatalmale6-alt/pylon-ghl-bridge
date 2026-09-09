@@ -22,7 +22,7 @@
           "contract-signed"
         ],
         "customFields": {
-          "contact.pylon_project_reference": "{{project.reference_number}}",
+          "contact.pylon_project_reference": "{{project.reference_number || project.id}}",
           "contact.pylon_project_link": "{{project.in_app_url}}",
           "contact.signed_contract_pdf": "{{contract.signed_pdf_stored_url}}"
         }
@@ -33,9 +33,9 @@
         "status": "open",
         "stage": "signed",
         "customFields": {
-          "opportunity.contract_reference": "{{project.reference_number}}",
+          "opportunity.contract_reference": "{{project.reference_number || project.id}}",
           "opportunity.contract_value": "{{contract.total_amount}}",
-          "opportunity.contract_currency": "{{contract.currency}}",
+          "opportunity.contract_currency": "{{contract.currency | upper}}",
           "opportunity.contract_signed_date": "{{contract.signed_at | date}}",
           "opportunity.signed_by": "{{contract.signer_name || client.name}}",
           "opportunity.signed_by_email": "{{contract.signer_email || client.email}}",
@@ -51,7 +51,7 @@
         }
       },
       "invoices": {
-        "currency": "{{contract.currency || 'AUD'}}",
+        "currency": "{{contract.currency || 'AUD' | upper}}",
         "stages": [
           {
             "key": "deposit",
@@ -59,8 +59,8 @@
             "percent": 10,
             "trigger": "signed",
             "dueDays": 7,
-            "name": "Deposit (10%) - {{project.reference_number}}",
-            "description": "10% deposit on signing. {{contract.description || contract.title}} \u2014 Pylon reference {{project.reference_number}}"
+            "name": "Deposit (10%) - {{project.reference_number || project.id}}",
+            "description": "10% deposit on signing. {{contract.description || contract.title}} \u2014 Pylon reference {{project.reference_number || project.id}}"
           },
           {
             "key": "pre_install",
@@ -68,24 +68,24 @@
             "percent": 60,
             "trigger": "manual",
             "dueDays": 7,
-            "name": "Pre-installation (60%) - {{project.reference_number}}",
-            "description": "60% payable prior to installation. Pylon reference {{project.reference_number}}"
+            "name": "Pre-installation (60%) - {{project.reference_number || project.id}}",
+            "description": "60% payable prior to installation. Pylon reference {{project.reference_number || project.id}}"
           },
           {
             "key": "installation",
             "label": "Final payment",
             "trigger": "manual",
             "dueDays": 0,
-            "name": "Final payment - {{project.reference_number}}",
-            "description": "Balance of the contract, payable on the day of installation. Pylon reference {{project.reference_number}}",
+            "name": "Final payment - {{project.reference_number || project.id}}",
+            "description": "Balance of the contract, payable on the day of installation. Pylon reference {{project.reference_number || project.id}}",
             "remainder": true
           }
         ],
-        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: {{env.BANK_NAME}}<br>BSB: {{env.BANK_BSB}}<br>Account number: {{env.BANK_ACCOUNT}}<br>Reference: {{project.reference_number}}</p><p>Please quote the reference above so we can match your payment.</p>",
+        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: {{env.BANK_NAME}}<br>BSB: {{env.BANK_BSB}}<br>Account number: {{env.BANK_ACCOUNT}}<br>Reference: {{project.reference_number || project.id}}</p><p>Please quote the reference above so we can match your payment.</p>",
         "businessName": "{{env.BUSINESS_NAME}}",
         "businessAbn": "{{env.BUSINESS_ABN}}"
       },
-      "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
+      "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
     },
     "gateway_payments.created": {
       "contact": {
@@ -109,7 +109,7 @@
           "opportunity.payment_receipt_link": "{{payment.receipt_url}}"
         }
       },
-      "note": "Payment received through Pylon on {{payment.received_at | date}}.\nType: {{payment.purpose_label}}\nAmount: {{payment.amount_formatted}}\nReceipt: {{payment.receipt_url}}\nPylon reference: {{project.reference_number}}"
+      "note": "Payment received through Pylon on {{payment.received_at | date}}.\nType: {{payment.purpose_label}}\nAmount: {{payment.amount_formatted}}\nReceipt: {{payment.receipt_url}}\nPylon reference: {{project.reference_number || project.id}}"
     }
   }
 }

@@ -2,6 +2,25 @@ import crypto from 'node:crypto';
 import { buildUrl, requestJson } from './lib/http.js';
 import { IntegrationError, networkError } from './lib/errors.js';
 
+/**
+ * Every solar_design attribute this bridge maps. Kept in one place because the
+ * API requires them to be requested by name — adding a mapping for a design
+ * field means adding it here too, or it silently arrives undefined.
+ */
+export const DESIGN_FIELDS = [
+  'title',
+  'label',
+  'is_primary',
+  'summary',
+  'description',
+  'pricing',
+  'line_items',
+  'proposal_quote',
+  'in_app_url',
+  'created_at',
+  'updated_at',
+];
+
 const SIGNATURE_HEADER = 'pylon-webhook-signature';
 const TIMESTAMP_HEADER = 'pylon-webhook-timestamp';
 
@@ -115,9 +134,18 @@ export class PylonClient {
     return body?.data ?? null;
   }
 
-  /** GET /v1/solar_designs/{id} — pricing, line items, proposal URLs. */
-  async getSolarDesign(id) {
-    const body = await this.get(`/v1/solar_designs/${encodeURIComponent(id)}`);
+  /**
+   * GET /v1/solar_designs/{id} — pricing, line items, proposal URLs.
+   *
+   * The live API REFUSES this endpoint without a sparse-fieldset parameter:
+   *   422 {"fields.solar_designs":["The property fields[solar_designs] is required"]}
+   * so the fields this bridge actually reads are named explicitly. Ask for a
+   * field that does not exist and Pylon helpfully lists the valid ones.
+   */
+  async getSolarDesign(id, { fields = DESIGN_FIELDS } = {}) {
+    const body = await this.get(`/v1/solar_designs/${encodeURIComponent(id)}`, {
+      'fields[solar_designs]': fields.join(','),
+    });
     return body?.data ?? null;
   }
 

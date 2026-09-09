@@ -61,6 +61,16 @@ export async function startFakePylon({ failPdf = false, projectOverrides = {} } 
     }
 
     if (url.pathname.startsWith('/v1/solar_designs/')) {
+      // The live API refuses this endpoint without a sparse-fieldset parameter.
+      // The fake enforces it too, because a permissive stand-in is how the real
+      // 422 got all the way to a live run before anyone noticed.
+      const fields = url.searchParams.get('fields[solar_designs]');
+      if (!fields) {
+        res
+          .writeHead(422, { 'content-type': 'application/json' })
+          .end(JSON.stringify({ errors: { 'fields.solar_designs': ['The property fields[solar_designs] is required'] } }));
+        return;
+      }
       res.writeHead(200, { 'content-type': 'application/vnd.api+json' }).end(JSON.stringify(readFixture('design.json')));
       return;
     }
