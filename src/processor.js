@@ -753,7 +753,33 @@ export class Processor {
       body.tags = section.tags.map((tag) => render(tag, payload)).filter(Boolean);
     }
 
-    const contact = await this.ghl.upsertContact(body);
+    let contact;
+    try {
+      contact = await this.ghl.upsertContact(body);
+    } catch (error) {
+      // The location can be set to forbid duplicate contacts. If the email
+      // matches one record and the phone matches a DIFFERENT one, the upsert is
+      // refused outright and the whole signature would be lost. Losing a signed
+      // contract over a phone number is not a trade worth making, so retry
+      // without it and say which record collided so the two can be merged.
+      const collision = error?.status === 400 && /duplicat/i.test(error?.detail?.body ?? error?.message ?? '');
+      if (!collision || !body.phone) throw error;
+
+      let otherId = '';
+      try {
+        otherId = JSON.parse(error.detail.body)?.meta?.contactId ?? '';
+      } catch {
+        /* the id is a nicety, not worth failing over */
+      }
+      warnings.push(
+        `The phone number ${body.phone} already belongs to a different GoHighLevel contact${otherId ? ` (${otherId})` : ''}, ` +
+          'and this location does not allow duplicates. The contact was saved without the phone number so the contract was not lost. ' +
+          'Merge the two records in GoHighLevel and the phone will fill in next time.',
+      );
+      logger.warn('contact upsert hit a duplicate-phone guard, retrying without the phone', { otherId });
+      const { phone, ...withoutPhone } = body;
+      contact = await this.ghl.upsertContact(withoutPhone);
+    }
     return { id: contact.id, written: entries.map((e) => e._key ?? e.id), body };
   }
 

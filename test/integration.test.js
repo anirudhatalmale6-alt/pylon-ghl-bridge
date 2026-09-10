@@ -1227,3 +1227,29 @@ test('health reports which build is running', async (t) => {
     'without this there is no way to tell a deployed fix from a deploy that never happened',
   );
 });
+
+test('a phone that belongs to another contact does not lose the signature', async (t) => {
+  // GoHighLevel locations can forbid duplicate contacts. If the email matches
+  // one record and the phone matches a different one, the upsert is refused and
+  // the whole signed contract would be lost. This actually happened in the live
+  // account: a stray phone-only record held the same number.
+  const h = await harness({ ghl: { duplicatePhone: '+61417522630' }, config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(record.status, 'succeeded', 'the contract still lands');
+  assert.equal(record.result.contactId, 'contact-1');
+  assert.equal(record.result.monetaryValue, 15600, 'and the opportunity value is still set');
+
+  const attempts = h.ghl.findAll('POST', '/contacts/upsert');
+  assert.equal(attempts.length, 2, 'one attempt with the phone, one without');
+  assert.equal(attempts[0].body.phone, '+61417522630');
+  assert.equal(attempts[1].body.phone, undefined, 'retried without the phone rather than giving up');
+
+  const warning = record.result.warnings.join(' ');
+  assert.match(warning, /already belongs to a different GoHighLevel contact/);
+  assert.match(warning, /other-contact-99/, 'names the colliding record so the two can be merged');
+});

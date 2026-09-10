@@ -113,7 +113,7 @@ export const GHL_FIELDS = [
  * Stand-in for services.leadconnectorhq.com. Records every request body so the
  * tests can assert exactly what would have been written to the real CRM.
  */
-export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false, invoiceScope = true } = {}) {
+export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false, invoiceScope = true, duplicatePhone = null } = {}) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -219,6 +219,15 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
     }
 
     if (req.method === 'POST' && url.pathname === '/contacts/upsert') {
+      // Mirrors a location configured to forbid duplicate contacts: the phone
+      // belongs to a different record from the email. Copied from a real 400.
+      if (duplicatePhone && body?.phone === duplicatePhone) {
+        return json(res, 400, {
+          statusCode: 400,
+          message: 'This location does not allow duplicated contacts.',
+          meta: { contactId: 'other-contact-99', matchingField: 'phone' },
+        });
+      }
       return json(res, 200, { contact: { id: 'contact-1', email: body?.email }, new: true });
     }
 
