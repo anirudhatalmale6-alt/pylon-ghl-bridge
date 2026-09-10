@@ -49,20 +49,53 @@ export function presentedToken(req, headerName) {
 }
 
 /**
- * Formbay has not published its payload shape to us yet, so nothing is assumed
- * beyond the event name. Every delivery is kept verbatim — when the first real
- * one lands, the recorded body is what tells us how to read it.
+ * The real shape, taken from Formbay's own test ping on 11 September 2026:
+ *
+ *   { "version": 1,
+ *     "event_id": "8e6af8df-1088-4e70-b337-72451c2fd7c3",
+ *     "event": "webhook.test",
+ *     "formid": 0,
+ *     "ftype": "pv",
+ *     "timestamp": "2026-09-10T23:04:41+00:00",
+ *     "test": true }
+ *
+ * `ftype` + `formid` is the number the business actually uses: ftype "pv" with
+ * formid 1272458 is the PV1272458 written in their tracker, and "bstc" with
+ * 238207 is BSTC238207 — the same key the Formbay payment advice prints. That
+ * is what joins a delivery to a row, so it is built here rather than guessed at
+ * later. `event_id` is kept because Formbay may redeliver.
+ *
+ * The older `job.*` guesses are retained as fallbacks: the test ping is the only
+ * real payload seen so far, and a job.updated may well carry more.
  */
 export function describe(body) {
   const event = body?.event ?? body?.type ?? body?.name ?? null;
   const job = body?.job ?? body?.data?.job ?? body?.data ?? null;
   return {
     event,
-    isTest: event === TEST_EVENT,
-    jobId: job?.id ?? job?.job_id ?? body?.job_id ?? null,
-    formbayNumber: job?.number ?? job?.formbay_number ?? job?.reference ?? null,
-    status: job?.status ?? null,
+    isTest: event === TEST_EVENT || body?.test === true,
+    eventId: body?.event_id ?? null,
+    version: body?.version ?? null,
+    occurredAt: body?.timestamp ?? null,
+    formId: body?.formid ?? job?.id ?? job?.job_id ?? body?.job_id ?? null,
+    formType: body?.ftype ?? null,
+    formbayNumber: formbayNumber(body) ?? job?.number ?? job?.formbay_number ?? job?.reference ?? null,
+    status: job?.status ?? body?.status ?? null,
   };
+}
+
+/**
+ * "pv" + 1272458 -> "PV1272458". A formid of 0 is the test ping, which refers to
+ * no job at all, so it deliberately yields null rather than a plausible-looking
+ * "PV0" that would match nothing and look like real data in the log.
+ */
+export function formbayNumber(body) {
+  const type = body?.ftype;
+  const id = body?.formid;
+  if (!type || id === null || id === undefined) return null;
+  const numeric = Number(id);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return `${String(type).toUpperCase()}${numeric}`;
 }
 
 export class FormbayLog {
