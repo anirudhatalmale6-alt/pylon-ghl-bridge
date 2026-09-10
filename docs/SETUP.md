@@ -95,12 +95,34 @@ Content-Type: application/json
 `contactId` or `reference` (the Pylon reference number) work in place of
 `opportunityId`. Use `installation` for the last stage.
 
-The tidy way to drive this is a **GoHighLevel workflow**: trigger on the
-opportunity entering "60% Deposit Required", action = Webhook, POST to that URL
-with the admin token as an `Authorization` header. Then nobody has to remember.
-
 Calling it twice is safe — a stage that has already been invoiced returns the
 invoice that exists rather than billing the customer again.
+
+##### Wiring it to a pipeline stage (verified steps)
+
+So nobody has to remember to do it:
+
+1. **Automation → Workflows → Create Workflow**
+2. **Add New Trigger → "Pipeline Stage Changed"**. Filter it to the pipeline and
+   the stage that means "time to bill the 60%".
+3. **Add Action → "Custom Webhook"**
+   - Method: `POST`
+   - URL: `https://pylon-ghl-bridge.onrender.com/invoices/pre_install`
+   - Header: `Authorization` = `Bearer <ADMIN_TOKEN>`
+   - Body:
+     ```json
+     { "contactId": "{{contact.id}}" }
+     ```
+4. Duplicate the workflow for the final payment, changing the stage and the URL
+   to `.../invoices/installation`.
+
+**Use `{{contact.id}}`, not `{{opportunity.id}}`.** The contact is the same
+record whichever pipeline the job is sitting in, so the same workflow keeps
+working if the job is later tracked in a different pipeline. An opportunity id
+only resolves if it is the one the bridge itself created.
+
+`{{opportunity.id}}` and the Pylon reference number both work too — the endpoint
+accepts `opportunityId`, `contactId` or `reference`.
 
 #### Getting paid
 
