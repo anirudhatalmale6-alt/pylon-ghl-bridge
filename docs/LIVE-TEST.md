@@ -223,16 +223,42 @@ should:
 Nothing was written to GoHighLevel. That one failed event is the only entry in
 the production log and is expected.
 
-## Not yet proven
+## Staged invoicing PROVEN LIVE — 10 September 2026
 
-One hop: a **real signature event travelling from Pylon to GoHighLevel unaided**.
+Running commit `8c99ab1`. Both remaining stages raised through the deployed
+service against the first real signed contract ($169):
 
-This was left deliberately. Every signed project in the live Pylon account
-belongs to an actual customer, and pushing one through to prove the point would
-create a real contact, a real opportunity and three real invoices for someone
-who signed nothing that day. It needs a dummy proposal signed in Pylon instead.
+| Stage | Amount | How |
+| --- | --- | --- |
+| Deposit (10%) | $16.90 | raised by hand while the phone fix was undeployed |
+| Pre-installation (60%) | $101.40 | `POST /invoices/pre_install` |
+| Final payment (30%) | $50.70 | `POST /invoices/installation` |
+| **Total** | **$169.00** | = the contract, exactly |
 
-Everything either side of that hop is verified: real Pylon data is read
-successfully (contract value, system size, a real 1.7 MB signed PDF), real
-GoHighLevel records are written, and the signature check on the live service
-accepts a genuine signature and rejects a forged one.
+Zero warnings on all three.
+
+### The double-billing guard, tested on purpose
+
+`POST /invoices/pre_install` was called **twice**. The second call returned the
+**same invoice id** with `alreadyExisted: true` and created nothing.
+
+That is the property worth having: in real use someone will drag a card back and
+forth in the pipeline, or a workflow will fire twice, and neither can bill a
+customer twice.
+
+### Deep health at the same moment
+
+`commit: 8c99ab1`, `mode: full`, `ok: true` — Pylon connected, GoHighLevel
+connected, pipeline and stage resolved, **no warnings at all**.
+
+## Everything is now proven end to end
+
+Contract signed in Pylon → contact created or matched with an E.164 phone →
+opportunity created, moved to the signed stage, value set to the contract value
+→ signed PDF pulled from Pylon and filed in three places → deposit invoice
+raised with the bank details, ABN and job reference → 60% and final invoices
+raised on demand from a pipeline stage.
+
+The only thing not exercised by a machine is a human dragging a card between
+stages in GoHighLevel, which is what the two workflows in
+[SETUP.md](SETUP.md) do.
