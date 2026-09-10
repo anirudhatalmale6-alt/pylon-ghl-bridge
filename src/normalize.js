@@ -210,6 +210,18 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
     signer_email: eventAttrs.customer_email ?? '',
     signed_at: eventAttrs.created_at ?? null,
 
+    /**
+     * The quoted equipment as one readable block, for putting on an invoice.
+     *
+     * Skips hidden lines, and skips the summary row — Pylon repeats the design
+     * title as a line item with no quantity, which would just duplicate the
+     * heading directly above it on the invoice.
+     */
+    line_items_summary: (a.line_items ?? [])
+      .filter((item) => !item.is_line_hidden && Number(item.quantity) > 0)
+      .map((item) => `${item.quantity} x ${item.description ?? item.key ?? ''}`.trim())
+      .join('\n'),
+
     line_items: (a.line_items ?? []).map((item) => ({
       key: item.key,
       description: item.description,

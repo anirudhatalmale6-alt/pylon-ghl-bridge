@@ -1281,3 +1281,70 @@ test('a repeat customer invoices the most recent job, and says so', async (t) =>
   const single = store.findLinkBy({ contactId: 'c1', projectId: 'job-old' });
   assert.equal(single.projectId, 'job-old', 'an explicit project reference wins over everything');
 });
+
+test('an empty value drops its line instead of mashing two together', async (t) => {
+  const { render } = await import('../src/mapping.js');
+  const tpl = [
+    '60% payable prior to installation.',
+    '{{contract.name}}',
+    '{{contract.description}}',
+    'Site address: {{client.address.full}}',
+    'Pylon reference: {{project.id}}',
+  ].join('\n');
+
+  const full = render(tpl, {
+    contract: { name: '9.13kW Solar', description: 'REC + storage' },
+    client: { address: { full: '180 Cummins Rd' } },
+    project: { id: 'ABC' },
+  });
+  assert.equal(full.split('\n').length, 5, 'every line present when every value is');
+
+  // `\s{2,}` used to eat the newline either side of an empty value.
+  const noDescription = render(tpl, {
+    contract: { name: '9.13kW Solar', description: '' },
+    client: { address: { full: '180 Cummins Rd' } },
+    project: { id: 'ABC' },
+  });
+  assert.doesNotMatch(noDescription, /9\.13kW Solar Site address/, 'two lines must not be mashed into one');
+  assert.deepEqual(noDescription.split('\n'), [
+    '60% payable prior to installation.',
+    '9.13kW Solar',
+    'Site address: 180 Cummins Rd',
+    'Pylon reference: ABC',
+  ]);
+
+  // A label with nothing after it is worse than no line at all.
+  const noAddress = render(tpl, {
+    contract: { name: '9.13kW Solar', description: 'REC' },
+    client: { address: { full: '' } },
+    project: { id: 'ABC' },
+  });
+  assert.doesNotMatch(noAddress, /Site address:/, 'a dangling label is dropped');
+  assert.match(noAddress, /Pylon reference: ABC/, 'and the line after it survives');
+});
+
+test('the invoice description carries the quote and the site address', async (t) => {
+  const h = await harness({ config: INVOICING_ON });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await h.bridge.queue.onIdle();
+
+  const description = h.ghl.find('POST', '/invoices/').body.items[0].description;
+  assert.match(description, /6\.6 kW Solar \+ 10 kWh Battery/, 'what was quoted in Pylon');
+  assert.match(description, /Site address: 19 Parmesan Avenue, Glen Iris, Victoria, 3147/, 'and where it is going');
+  assert.match(description, /Pylon reference: PYL-0003-7789/);
+});
+
+test('the quoted equipment is available as one readable block', async (t) => {
+  const { normalizeSignedEvent } = await import('../src/normalize.js');
+  const design = readFixture('design.json').data;
+  const payload = normalizeSignedEvent({ event: { attributes: {} }, project: null, design });
+
+  const summary = payload.contract.line_items_summary;
+  assert.ok(summary.length > 0, 'there is something to show');
+  assert.doesNotMatch(summary, /^null x/m, 'the summary row Pylon repeats as a line item is skipped');
+  for (const line of summary.split('\n')) {
+    assert.match(line, /^\d+(\.\d+)? x .+/, `every line reads "<qty> x <item>", got ${JSON.stringify(line)}`);
+  }
+});

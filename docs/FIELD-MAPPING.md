@@ -302,6 +302,25 @@ unless the name says `_cents`; Pylon's own API returns cents everywhere.
 | `project.dnsp_preapproval_number` | `DNSP-99182` |
 | `project.created_at` / `project.updated_at` | timestamps |
 
+### Multi-line descriptions
+
+An invoice description can be several lines. If a value is missing, its line is
+dropped rather than being mashed into the one below, and a label with nothing
+after the colon is dropped too — so a job with no site address on the quote does
+not produce "Site address: Pylon reference: ABC".
+
+`contract.line_items_summary` is the quoted equipment as one readable block:
+
+```
+11 x REC Solar Alpha Series REC370AA (370W)
+2 x Sungrow SBR256 (25.6kWh / 25.6kWh usable)
+1 x Sungrow SH10RT (AS4777-2 2020) (10kW)
+1 x Installation & labour
+```
+
+Add it to a stage `description` to itemise the quote on the invoice. Hidden
+lines and the summary row Pylon repeats as a line item are both skipped.
+
 ### `contract.*`
 
 | Path | Example |

@@ -118,7 +118,19 @@ export function render(template, source) {
     if (isEmpty(value)) missing = true;
     return isEmpty(value) ? '' : String(value);
   });
-  const cleaned = rendered.replace(/\s{2,}/g, ' ').trim();
+  // Collapse runs of spaces/tabs but NOT newlines. `\s{2,}` used to eat the line
+  // break either side of an empty value, so an invoice with no site address
+  // read "9.13kW Solar Site address: Pylon reference: ABC" — two lines mashed
+  // into one and a dangling label.
+  const cleaned = rendered
+    .replace(/[^\S\n]{2,}/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    // Drop lines an empty value left behind: blank ones, and labels with
+    // nothing after the colon.
+    .filter((line) => line !== '' && !/^[^:]{1,40}:$/.test(line))
+    .join('\n')
+    .trim();
   return missing && cleaned === '' ? '' : cleaned;
 }
 
