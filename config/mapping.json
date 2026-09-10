@@ -10,7 +10,7 @@
           "lastName": "{{client.last_name}}",
           "name": "{{client.name}}",
           "email": "{{client.email || client.project_contact_email}}",
-          "phone": "{{client.phone}}",
+          "phone": "{{client.phone_e164 || client.phone}}",
           "address1": "{{client.address.line1}}",
           "city": "{{client.address.city}}",
           "state": "{{client.address.state}}",
@@ -91,7 +91,7 @@
       "contact": {
         "standard": {
           "email": "{{client.email}}",
-          "phone": "{{client.phone}}"
+          "phone": "{{client.phone_e164 || client.phone}}"
         },
         "tags": [
           "payment-received"

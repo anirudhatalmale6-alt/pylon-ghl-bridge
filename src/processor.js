@@ -446,7 +446,7 @@ export class Processor {
 
       const issueDate = toIsoDate(new Date().toISOString());
       const currency = render(section.currency, payload) || payload.contract.currency || 'AUD';
-      const invoicePhone = toE164(payload.client.phone, payload.client.address?.country_code || payload.project.country_code);
+      const invoicePhone = payload.client.phone_e164 || toE164(payload.client.phone, payload.client.address?.country_code || payload.project.country_code);
       const invoiceBody = {
         name: render(stage.name, payload) || `${stage.label ?? stage.key} - ${payload.project.reference_number ?? ''}`.trim(),
         currency,

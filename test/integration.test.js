@@ -71,7 +71,7 @@ test('a signed contract lands in GoHighLevel end to end', async (t) => {
   assert.equal(upsert.body.firstName, 'Andre');
   assert.equal(upsert.body.lastName, 'Rieu');
   assert.equal(upsert.body.email, 'andre@example.com');
-  assert.equal(upsert.body.phone, '0417 522 630');
+  assert.equal(upsert.body.phone, '+61417522630', 'E.164 — GoHighLevel mangles a local number into a nine-digit one');
   assert.equal(upsert.body.address1, '19 Parmesan Avenue');
   assert.equal(upsert.body.postalCode, '3147');
   assert.equal(upsert.body.country, 'AU');
@@ -1177,7 +1177,7 @@ test('an Australian local phone is converted to E.164 for the invoice', async (t
   assert.equal(toE164(null, 'AU'), null);
 });
 
-test('the invoice carries the E.164 phone, the contact keeps the local one', async (t) => {
+test('both the invoice AND the contact get the E.164 phone', async (t) => {
   const h = await harness({ config: INVOICING_ON });
   t.after(() => h.close());
 
@@ -1190,12 +1190,13 @@ test('the invoice carries the E.164 phone, the contact keeps the local one', asy
   assert.equal(
     h.ghl.find('POST', '/invoices/').body.contactDetails.phoneNo,
     '+61417522630',
-    'the invoice API insists on E.164',
+    'the invoice API rejects anything else outright',
   );
   assert.equal(
     h.ghl.find('POST', '/contacts/upsert').body.phone,
-    '0417 522 630',
-    'the contact keeps the number as the business wrote it — GoHighLevel accepts it there',
+    '+61417522630',
+    'the contact needs it too: GoHighLevel ACCEPTS "0417522630" and silently stores "+147522630", ' +
+      'a nine-digit number that does not exist. Verified on a real record.',
   );
 });
 

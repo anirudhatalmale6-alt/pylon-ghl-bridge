@@ -57,12 +57,24 @@ function clientFrom(project, eventAttrs = {}) {
   const name = eventAttrs.customer_name || details.name || '';
   const email = eventAttrs.customer_email || details.email || '';
   const { firstName, lastName } = splitName(name);
+  const phone = details.phone || '';
+  const country = attrs(project).site_country_code || (attrs(project).site_address ?? {}).country || '';
   return {
     name,
     first_name: firstName,
     last_name: lastName,
     email,
-    phone: details.phone || '',
+    phone,
+    /**
+     * The same number in E.164, or '' when it cannot be converted.
+     *
+     * Needed for BOTH the invoice and the contact. The invoice API rejects a
+     * local number outright; the contact API is worse — it ACCEPTS
+     * "0417522630" and silently stores "+147522630", a nine-digit number that
+     * does not exist. Verified on a real record. Sending E.164 is the only way
+     * to get the right number into the CRM.
+     */
+    phone_e164: toE164(phone, country) || '',
     project_contact_name: details.name || '',
     project_contact_email: details.email || '',
     address: addressFrom(project),
