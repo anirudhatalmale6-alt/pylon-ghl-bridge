@@ -113,23 +113,31 @@ export function render(template, source) {
   if (single) return resolveExpression(single[1], source);
 
   let missing = false;
-  const rendered = template.replace(TOKEN, (_match, expression) => {
-    const value = resolveExpression(expression, source);
-    if (isEmpty(value)) missing = true;
-    return isEmpty(value) ? '' : String(value);
+
+  // Rendered line by line so a value that comes out empty takes ITS OWN line
+  // with it, and nothing else. A deliberate blank line in the template is
+  // spacing and is kept; a line that only existed to show a value is dropped
+  // when there is no value.
+  const lines = template.split('\n').map((line) => {
+    const hadToken = line.includes('{{');
+    const rendered = line.replace(TOKEN, (_match, expression) => {
+      const value = resolveExpression(expression, source);
+      if (isEmpty(value)) missing = true;
+      return isEmpty(value) ? '' : String(value);
+    });
+    // Collapse runs of spaces/tabs, never newlines.
+    const tidied = rendered.replace(/[^\S\n]{2,}/g, ' ').trim();
+    if (!hadToken) return tidied; // static text, including a deliberate blank line
+    // A line built around a value, with no value: drop it rather than leave a
+    // blank or a dangling "Site address:" label.
+    if (tidied === '' || /^[^:]{1,40}:$/.test(tidied)) return null;
+    return tidied;
   });
-  // Collapse runs of spaces/tabs but NOT newlines. `\s{2,}` used to eat the line
-  // break either side of an empty value, so an invoice with no site address
-  // read "9.13kW Solar Site address: Pylon reference: ABC" — two lines mashed
-  // into one and a dangling label.
-  const cleaned = rendered
-    .replace(/[^\S\n]{2,}/g, ' ')
-    .split('\n')
-    .map((line) => line.trim())
-    // Drop lines an empty value left behind: blank ones, and labels with
-    // nothing after the colon.
-    .filter((line) => line !== '' && !/^[^:]{1,40}:$/.test(line))
+
+  const cleaned = lines
+    .filter((line) => line !== null)
     .join('\n')
+    .replace(/\n{3,}/g, '\n\n') // never more than one blank line in a row
     .trim();
   return missing && cleaned === '' ? '' : cleaned;
 }

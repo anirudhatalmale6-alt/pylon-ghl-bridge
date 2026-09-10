@@ -309,7 +309,36 @@ dropped rather than being mashed into the one below, and a label with nothing
 after the colon is dropped too — so a job with no site address on the quote does
 not produce "Site address: Pylon reference: ABC".
 
-`contract.line_items_summary` is the quoted equipment as one readable block:
+#### Tax — two different numbers, do not conflate them
+
+| Field | What it is |
+| --- | --- |
+| `contract.total_tax_formatted` | what **Pylon** reports: GST on the full system price **before** any rebate |
+| `contract.gst_included_formatted` | GST **inside the amount actually payable**, at the usual 1/11 of a GST-inclusive total |
+| `contract.total_includes_tax` | whether the contract total already includes tax |
+
+On a real job here: system $2,272.73 ex GST, GST $227.27, sub-total $2,500.00,
+less an STC rebate of $2,331.00, **total payable $169.00**. Pylon reports the
+tax as **$227.27** — which is more than the customer pays. Putting that on the
+invoice would be badly wrong. The GST inside $169.00 is **$15.36**.
+
+Neither is written to an invoice by default. Which one belongs there, and
+whether the STC assignment changes it, is a question for an accountant.
+
+#### Rebates are kept out of the equipment list
+
+`contract.rebates_summary` holds anything with a negative amount, worded so it
+cannot be misread:
+
+```
+63 x STCs: $2,331.00 — already deducted from the price above
+```
+
+A bare "63 x STCs" sitting among the equipment reads to a customer like a
+discount still coming to them, rather than one already taken off the price.
+
+`contract.line_items_summary` is the quoted equipment as one readable block,
+with rebates and hidden lines excluded:
 
 ```
 11 x REC Solar Alpha Series REC370AA (370W)

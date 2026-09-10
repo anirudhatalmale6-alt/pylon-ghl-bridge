@@ -1348,3 +1348,74 @@ test('the quoted equipment is available as one readable block', async (t) => {
     assert.match(line, /^\d+(\.\d+)? x .+/, `every line reads "<qty> x <item>", got ${JSON.stringify(line)}`);
   }
 });
+
+test('a rebate is separated from the equipment and worded as already deducted', async (t) => {
+  const { normalizeSignedEvent } = await import('../src/normalize.js');
+  const design = {
+    attributes: {
+      pricing: { total: 16900, total_includes_tax: true, currency: 'aud' },
+      proposal_quote: { currency: 'aud', locale_au: { eligible_for_stcs: true, stc_quantity: 63, stc_value_formatted: '$2,331.00' } },
+      line_items: [
+        { description: 'Sungrow SH10RT', quantity: 1, total_amount: null },
+        { description: 'Installation & labour', quantity: 1, total_amount: null },
+        { description: 'STCs', quantity: 63, total_amount: -233100 },
+        { description: 'Hidden thing', quantity: 1, total_amount: 100, is_line_hidden: true },
+      ],
+    },
+  };
+  const { contract } = normalizeSignedEvent({ event: { attributes: {} }, project: null, design });
+
+  assert.doesNotMatch(contract.line_items_summary, /STC/, 'a bare "63 x STCs" reads to a customer like a discount coming to them');
+  assert.doesNotMatch(contract.line_items_summary, /Hidden thing/);
+  assert.match(contract.line_items_summary, /1 x Sungrow SH10RT/);
+
+  assert.match(contract.rebates_summary, /63 x STCs/);
+  assert.match(contract.rebates_summary, /\$2,331\.00/);
+  assert.match(contract.rebates_summary, /already deducted from the price above/);
+});
+
+test('the two GST figures are named for what they are and neither is guessed', async (t) => {
+  const { normalizeSignedEvent } = await import('../src/normalize.js');
+  const design = {
+    attributes: {
+      // The real shape from the live account: $169 payable, GST-inclusive,
+      // but Pylon reports $227.27 tax — that is the GST on the full system
+      // price BEFORE the STC rebate.
+      pricing: { total: 16900, total_includes_tax: true, currency: 'aud' },
+      proposal_quote: { currency: 'aud', total_tax_formatted: '$227.27' },
+      line_items: [],
+    },
+  };
+  const { contract } = normalizeSignedEvent({ event: { attributes: {} }, project: null, design });
+
+  assert.equal(contract.total_amount_formatted, '$169.00');
+  assert.equal(contract.total_includes_tax, true);
+  assert.equal(contract.total_tax_formatted, '$227.27', "Pylon's figure, kept as-is and named for what it is");
+  assert.equal(contract.gst_included, 15.36, '1/11 of the GST-inclusive amount actually payable');
+  assert.notEqual(contract.gst_included_formatted, contract.total_tax_formatted, 'the two must never be conflated');
+
+  // Not GST-inclusive: there is no "GST inside the total" to report.
+  const exclusive = normalizeSignedEvent({
+    event: { attributes: {} },
+    project: null,
+    design: { attributes: { pricing: { total: 16900, total_includes_tax: false, currency: 'aud' }, proposal_quote: {}, line_items: [] } },
+  });
+  assert.equal(exclusive.contract.gst_included, null, 'rather than inventing one');
+});
+
+test('a deliberate blank line is spacing and survives; a valueless line does not', async (t) => {
+  const { render } = await import('../src/mapping.js');
+  const tpl = 'Heading\n{{a}}\n\nSection:\n{{b}}\n\n{{c}}\nFooter';
+
+  assert.deepEqual(
+    render(tpl, { a: 'A', b: 'B', c: 'C' }).split('\n'),
+    ['Heading', 'A', '', 'Section:', 'B', '', 'C', 'Footer'],
+    'blank lines in the template are spacing and are kept',
+  );
+
+  assert.deepEqual(
+    render(tpl, { a: 'A', b: 'B', c: '' }).split('\n'),
+    ['Heading', 'A', '', 'Section:', 'B', '', 'Footer'],
+    'the valueless line goes, the spacing around it does not collapse the document',
+  );
+});

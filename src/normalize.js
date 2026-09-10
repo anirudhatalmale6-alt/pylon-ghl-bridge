@@ -213,14 +213,50 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
     /**
      * The quoted equipment as one readable block, for putting on an invoice.
      *
-     * Skips hidden lines, and skips the summary row — Pylon repeats the design
-     * title as a line item with no quantity, which would just duplicate the
-     * heading directly above it on the invoice.
+     * Skips hidden lines, the summary row (Pylon repeats the design title as a
+     * line item with no quantity), and anything with a NEGATIVE total — rebates
+     * are listed separately by `rebates_summary`, because a bare "63 x STCs"
+     * line reads to a customer like a discount they are about to receive rather
+     * than one already taken off the price.
      */
     line_items_summary: (a.line_items ?? [])
-      .filter((item) => !item.is_line_hidden && Number(item.quantity) > 0)
+      .filter((item) => !item.is_line_hidden && Number(item.quantity) > 0 && !(Number(item.total_amount) < 0))
       .map((item) => `${item.quantity} x ${item.description ?? item.key ?? ''}`.trim())
       .join('\n'),
+
+    /**
+     * Rebates already deducted from the price, worded so nobody reads them as a
+     * further discount. STCs are the usual one on an Australian solar job.
+     */
+    rebates_summary: (a.line_items ?? [])
+      .filter((item) => !item.is_line_hidden && Number(item.total_amount) < 0)
+      .map((item) => {
+        const value = formatMoney(Math.abs(centsToMajor(item.total_amount)), currency);
+        const count = Number(item.quantity) > 0 ? `${item.quantity} x ` : '';
+        return `${count}${item.description ?? item.key ?? 'Rebate'}: ${value} — already deducted from the price above`;
+      })
+      .join('\n'),
+
+    // --- tax -------------------------------------------------------------
+    // CAREFUL: two different numbers live here.
+    //   total_tax_formatted   GST on the full system price BEFORE any rebate,
+    //                         which is what Pylon reports ($227.27 on a job
+    //                         whose customer pays $169).
+    //   gst_included          the GST inside the amount actually payable, on
+    //                         the usual Australian 1/11 of a GST-inclusive
+    //                         total. Only meaningful when total_includes_tax.
+    // Putting the first on an invoice for the second would be badly wrong, so
+    // both are named for what they are and neither is used by default.
+    total_includes_tax: pricing.total_includes_tax ?? null,
+    gst_included: pricing.total_includes_tax && totalMajor !== null ? Math.round((totalMajor / 11) * 100) / 100 : null,
+    gst_included_formatted:
+      pricing.total_includes_tax && totalMajor !== null
+        ? formatMoney(Math.round((totalMajor / 11) * 100) / 100, currency)
+        : null,
+
+    stc_eligible: Boolean(quote.locale_au?.eligible_for_stcs),
+    stc_quantity: quote.locale_au?.stc_quantity ?? null,
+    stc_value_formatted: quote.locale_au?.stc_value_formatted ?? null,
 
     line_items: (a.line_items ?? []).map((item) => ({
       key: item.key,
