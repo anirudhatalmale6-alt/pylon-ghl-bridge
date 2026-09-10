@@ -94,3 +94,17 @@ services:
       # customer, so treat it as a password.
       - key: ADMIN_TOKEN
         sync: false
+
+      # --- Formbay -------------------------------------------------------
+      # Formbay does not sign its webhook deliveries, so this shared secret is
+      # the only thing protecting /webhooks/formbay. Set it BEFORE creating the
+      # webhook in Formbay: their dialog sends a webhook.test ping and refuses
+      # to save the webhook unless the endpoint answers 2xx, and an unset token
+      # here means every delivery is refused.
+      - key: FORMBAY_WEBHOOK_TOKEN
+        sync: false
+      # Which header carries the secret. Must match the custom header added on
+      # the Formbay webhook screen. Their "Authenticate via query parameter"
+      # option (?token=...) also works and needs no header.
+      - key: FORMBAY_WEBHOOK_HEADER
+        value: x-formbay-token

@@ -66,6 +66,16 @@ export const config = {
   // Useful for a first run against production data.
   dryRun: bool(process.env.DRY_RUN, false),
 
+  formbay: {
+    // Formbay's webhook screen lets you attach custom headers (max 10) or
+    // authenticate via a query parameter. Either way it is a shared secret we
+    // choose, not something Formbay issues — there is no HMAC signature on
+    // their deliveries, so this string is the only thing standing between the
+    // endpoint and the open internet. Empty means the route refuses everything.
+    webhookToken: process.env.FORMBAY_WEBHOOK_TOKEN || '',
+    webhookHeader: process.env.FORMBAY_WEBHOOK_HEADER || 'x-formbay-token',
+  },
+
   pylon: {
     apiBase: (process.env.PYLON_API_BASE || 'https://api.getpylon.com').replace(/\/$/, ''),
     // Optional. Pylon only hands out API tokens once their support team enables
@@ -210,6 +220,13 @@ export function configWarnings(cfg = config) {
   }
   if (!cfg.adminToken) {
     warnings.push('ADMIN_TOKEN is not set — /events, /mapping and the deep health check will return 503.');
+  }
+  if (!cfg.formbay?.webhookToken) {
+    warnings.push(
+      'FORMBAY_WEBHOOK_TOKEN is not set, so /webhooks/formbay rejects everything with 401. ' +
+        'Formbay will not let you SAVE a webhook until the endpoint answers its test ping with a 2xx, ' +
+        'so set this first, then create the webhook in Formbay with the matching header.',
+    );
   }
   if (cfg.dryRun) {
     warnings.push('DRY_RUN is on — nothing will actually be written to GoHighLevel.');

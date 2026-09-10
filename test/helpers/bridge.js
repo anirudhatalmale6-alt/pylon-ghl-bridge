@@ -55,11 +55,18 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       ...(overrides.ghl ?? {}),
     },
     callback: { url: '', secret: '', timeoutMs: 2000 },
+    // Mirrors the shipped default: NO token, so the default harness exercises
+    // the fail-closed path rather than a configuration nobody deploys.
+    formbay: {
+      webhookToken: '',
+      webhookHeader: 'x-formbay-token',
+      ...(overrides.formbay ?? {}),
+    },
     queue: { maxAttempts: 1, backoffSeconds: [1], concurrency: 1 },
     retentionDays: 90,
     // pylon and ghl are merged above, so drop them here rather than letting the
     // top-level spread replace the whole block.
-    ...(({ pylon, ghl, ...rest }) => rest)(overrides),
+    ...(({ pylon, ghl, formbay, ...rest }) => rest)(overrides),
   };
 }
 

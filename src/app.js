@@ -9,6 +9,7 @@ import { RetryQueue } from './queue.js';
 import { Processor, SIGNED_EVENT } from './processor.js';
 import { createNotifier, buildSummary } from './callback.js';
 import { loadMapping } from './mapping.js';
+import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
 
 /**
  * Wires everything together and returns { app, store, queue, processor } so the
@@ -31,6 +32,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const store = new EventStore({ dataDir: config.dataDir, retentionDays: config.retentionDays });
   const processor = new Processor({ config, pylon, ghl, mapping, store });
   const notify = createNotifier(config.callback);
+  const formbayLog = new FormbayLog({ dataDir: config.dataDir });
 
   for (const warning of configWarnings(config)) logger.warn(warning);
   for (const warning of mapping.warnings ?? []) logger.warn(warning);
@@ -104,6 +106,43 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   });
 
   app.use(express.json({ limit: '1mb' }));
+
+  // ----------------------------------------------------- formbay webhook
+
+  // Formbay sends a `webhook.test` ping and only creates the webhook if we
+  // answer 2xx, so this route has to be live BEFORE the webhook can be
+  // configured. It records and acknowledges; it writes nothing to GoHighLevel.
+  app.post('/webhooks/formbay', (req, res) => {
+    const expected = config.formbay.webhookToken;
+    if (!expected) {
+      logger.warn('formbay webhook rejected: FORMBAY_WEBHOOK_TOKEN is not set', { ip: req.ip });
+      return res.status(401).json({
+        ok: false,
+        error: 'This endpoint is not configured yet. Set FORMBAY_WEBHOOK_TOKEN on the service first.',
+      });
+    }
+    if (!tokenMatches(presentedToken(req, config.formbay.webhookHeader), expected)) {
+      logger.warn('formbay webhook rejected: bad or missing token', { ip: req.ip });
+      return res.status(401).json({ ok: false, error: 'Missing or incorrect webhook token.' });
+    }
+
+    const summary = describeFormbayEvent(req.body);
+    const record = formbayLog.append({ ...summary, body: req.body });
+    logger.info('formbay webhook received', {
+      id: record.id,
+      event: summary.event,
+      jobId: summary.jobId,
+      formbayNumber: summary.formbayNumber,
+    });
+
+    // 200 rather than 202: Formbay's save flow checks for a 2xx on the test ping.
+    return res.status(200).json({ ok: true, id: record.id, event: summary.event, test: summary.isTest });
+  });
+
+  app.get('/formbay/events', requireAdmin(config), (req, res) => {
+    const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 500);
+    res.json({ ok: true, ...formbayLog.stats(), events: formbayLog.list({ limit }) });
+  });
 
   // -------------------------------------------------------------- health
 
