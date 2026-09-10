@@ -212,14 +212,21 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
 
     // Rebuild just enough of the signed payload for the invoice from what was
     // stored when the contract came through — no Pylon call needed.
+    const warnings = [];
     const { projectId: linkedProjectId, link } = found;
+    if (found.ambiguous) {
+      warnings.push(
+        `This customer has ${found.matchCount} signed jobs on record. The most recent one ` +
+          `(${link.reference ?? linkedProjectId}) was invoiced. Send "reference" or "opportunityId" instead of ` +
+          '"contactId" to pick a specific job.',
+      );
+    }
     const payload = {
       project: { id: linkedProjectId, reference_number: link.reference ?? linkedProjectId },
       client: { name: link.contactName ?? '', email: link.contactEmail ?? '', phone: link.contactPhone ?? '' },
       contract: { total_amount: link.contractTotal ?? null, currency: link.currency ?? '', title: '', description: '' },
     };
 
-    const warnings = [];
     try {
       const raised = await processor.raiseInvoices({
         mapping,

@@ -71,11 +71,20 @@ export class EventStore {
     if (projectId && this.links.has(projectId)) {
       return { projectId, link: this.links.get(projectId) };
     }
+
+    // A repeat customer has more than one signed job under the same contact, so
+    // matching on contactId alone is ambiguous. Take the most recently signed —
+    // it is the one being worked on now. An opportunity id is unambiguous and
+    // wins outright.
+    const matches = [];
     for (const [id, link] of this.links) {
       if (opportunityId && link.opportunityId === opportunityId) return { projectId: id, link };
-      if (contactId && link.contactId === contactId) return { projectId: id, link };
+      if (contactId && link.contactId === contactId) matches.push({ projectId: id, link });
     }
-    return null;
+    if (!matches.length) return null;
+
+    matches.sort((a, b) => new Date(b.link.updatedAt ?? 0) - new Date(a.link.updatedAt ?? 0));
+    return { ...matches[0], ambiguous: matches.length > 1, matchCount: matches.length };
   }
 
   _persist() {

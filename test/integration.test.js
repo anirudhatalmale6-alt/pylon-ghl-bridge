@@ -1253,3 +1253,31 @@ test('a phone that belongs to another contact does not lose the signature', asyn
   assert.match(warning, /already belongs to a different GoHighLevel contact/);
   assert.match(warning, /other-contact-99/, 'names the colliding record so the two can be merged');
 });
+
+test('a repeat customer invoices the most recent job, and says so', async (t) => {
+  const { EventStore } = await import('../src/store.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'links-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const store = new EventStore({ dataDir: dir, retentionDays: 90 });
+
+  // Same customer, two signed jobs — a solar system last year, a battery today.
+  store.linkProject('job-old', { contactId: 'c1', opportunityId: 'opp-old', reference: 'OLD' });
+  await new Promise((r) => setTimeout(r, 5));
+  store.linkProject('job-new', { contactId: 'c1', opportunityId: 'opp-new', reference: 'NEW' });
+
+  const byContact = store.findLinkBy({ contactId: 'c1' });
+  assert.equal(byContact.projectId, 'job-new', 'the job being worked on now, not whichever was stored first');
+  assert.equal(byContact.ambiguous, true, 'and it admits the choice was ambiguous');
+  assert.equal(byContact.matchCount, 2);
+
+  const byOpportunity = store.findLinkBy({ opportunityId: 'opp-old' });
+  assert.equal(byOpportunity.projectId, 'job-old', 'an opportunity id is unambiguous and wins outright');
+  assert.ok(!byOpportunity.ambiguous);
+
+  const single = store.findLinkBy({ contactId: 'c1', projectId: 'job-old' });
+  assert.equal(single.projectId, 'job-old', 'an explicit project reference wins over everything');
+});
