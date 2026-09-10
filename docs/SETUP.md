@@ -307,6 +307,25 @@ The blueprint therefore asks for a paid instance and a 1 GB disk mounted at
 Alternatively run it anywhere that can host Node 20+: `npm ci --omit=dev`,
 `npm start`, behind nginx or Caddy for TLS.
 
+### Deploying a change
+
+The blueprint sets `autoDeployTrigger: commit`, so a push to `main` should
+deploy on its own.
+
+If it does not, deploy by hand — note this lives on the **service**, not on the
+Blueprint page (the Blueprint page's "Manual sync" only re-reads
+`render.yaml`, it does not ship new code):
+
+1. **Dashboard → the `pylon-ghl-bridge` service** (not the blueprint)
+2. the **Deploys** tab
+3. **Manual Deploy → "Deploy latest commit"**
+
+And check **Settings → Auto-Deploy** is set to **"On Commit"** rather than
+"Off".
+
+`GET /health` returns the running commit, so you can always tell whether a fix
+is actually live rather than assuming it is.
+
 ## 7. Pylon — webhook destination
 
 **Pylon → Settings → API → Webhook destinations → Create**

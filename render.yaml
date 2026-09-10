@@ -29,6 +29,12 @@ services:
     startCommand: npm start
     healthCheckPath: /health
 
+    # Deploy every push to the branch. Stated explicitly rather than relying on
+    # the default: the first deploy of this service did NOT pick up subsequent
+    # commits, which left a fix sitting undeployed for a day. `commit` is the
+    # documented equivalent of the deprecated `autoDeploy: true`.
+    autoDeployTrigger: commit
+
     disk:
       name: bridge-data
       mountPath: /var/data
