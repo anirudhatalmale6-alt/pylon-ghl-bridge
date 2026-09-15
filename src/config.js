@@ -146,6 +146,26 @@ export const config = {
     // logoUrl empty and that is why invoices came out unbranded. Must be a
     // publicly reachable URL — the media library gives one.
     invoiceLogoUrl: process.env.GHL_INVOICE_LOGO_URL || '',
+
+    // ONE invoice for the whole contract, with the payment stages as
+    // instalments on it, rather than one invoice per stage. Their accounts team
+    // asked for this: the GST belongs to the job, so splitting a job across
+    // three tax invoices makes the tax awkward to state on any of them.
+    invoiceSingle: bool(process.env.GHL_INVOICE_SINGLE, false),
+
+    // The GoHighLevel tax record to apply to the system line.
+    //
+    // `taxId` here is GHL's internal record id, which is NOT shown anywhere in
+    // their interface and cannot be read from the API while /invoices/taxes is
+    // returning 500. It was lifted from an invoice the client built by hand.
+    // Without it, no GST can be applied at all: items[].taxes[] is rejected
+    // unless each entry carries a matching _id.
+    invoiceTaxId: process.env.GHL_INVOICE_TAX_ID || '',
+    invoiceTaxName: process.env.GHL_INVOICE_TAX_NAME || 'GST',
+    invoiceTaxRate: Number(process.env.GHL_INVOICE_TAX_RATE ?? 10),
+    // 'exclusive' = added on top of the line amount, which is how their account
+    // is configured: a $2,000 line with 10% shows $200 tax and $2,200 due.
+    invoiceTaxCalculation: process.env.GHL_INVOICE_TAX_CALCULATION || 'exclusive',
   },
 
   // Optional outbound "did it land?" callback. Every processed event POSTs a
