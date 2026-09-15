@@ -69,7 +69,7 @@
       ],
       "proposal_quote": {
         "currency": "AUD",
-        "total_tax_formatted": "$1,418.18",
+        "total_tax_formatted": "$1,667.09",
         "total_price_formatted": "$15,600.00",
         "deposit_amount_formatted": "$1,560.00",
         "financed_amount_formatted": "$0.00",
@@ -87,8 +87,15 @@
       }
     },
     "relationships": {
-      "solar_project": { "data": { "type": "solar_projects", "id": "rukSigcyTR" } }
+      "solar_project": {
+        "data": {
+          "type": "solar_projects",
+          "id": "rukSigcyTR"
+        }
+      }
     },
-    "links": { "self": "https://api.getpylon.com/v1/solar_designs/RnlPy9NMNr" }
+    "links": {
+      "self": "https://api.getpylon.com/v1/solar_designs/RnlPy9NMNr"
+    }
   }
 }

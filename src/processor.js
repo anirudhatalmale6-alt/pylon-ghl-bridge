@@ -404,6 +404,13 @@ export class Processor {
       return [];
     }
 
+    // One invoice for the whole contract, raised once at signing. The manual
+    // per-stage endpoints are left alone: a GHL workflow may still be calling
+    // them, and silently doing nothing would be worse than doing the old thing.
+    if (this.config.ghl.invoiceSingle && trigger === 'signed' && !only) {
+      return this.raiseSingleInvoice({ section, payload, contactId, warnings });
+    }
+
     const wanted = section.stages.filter((stage) =>
       only ? stage.key === only : (stage.trigger ?? 'manual') === trigger,
     );
@@ -531,6 +538,152 @@ export class Processor {
     }
 
     return raised;
+  }
+
+  /**
+   * ONE tax invoice for the whole contract, with the payment stages as
+   * instalments on it.
+   *
+   * Their accounts team asked for this, and the reason is the GST. The tax
+   * belongs to the job, not to a tenth of it, and the customer should see the
+   * rebates coming off a price that has already been taxed.
+   *
+   * Shape, proven against the live API on a real signed contract:
+   *
+   *   line   system, EX GST            45,083.64   with a 10% tax
+   *   line   Less STC Incentive        -4,366.00   no tax
+   *   line   Less Battery STC          -6,068.00   no tax
+   *                             tax     4,508.36
+   *                           total    39,158.00   == the contract
+   *
+   * Negative line items are used rather than GoHighLevel's `discount` field,
+   * because that field reduces the amount tax is calculated on — which is
+   * exactly the bug this replaces.
+   */
+  async raiseSingleInvoice({ section, payload, contactId, warnings }) {
+    const contract = payload.contract ?? {};
+    const KEY = 'contract';
+
+    const already = this.store?.lookupProject(payload.project.id)?.invoices?.[KEY];
+    if (already) {
+      logger.info('contract already invoiced, skipping', { invoiceId: already.id });
+      return [{ key: KEY, id: already.id, amount: already.amount, alreadyExisted: true, sent: false }];
+    }
+
+    // Refuse rather than guess. A missing invoice can be replayed; a tax invoice
+    // sent to a customer with the wrong GST on it cannot be taken back.
+    if (!this.config.ghl.invoiceTaxId) {
+      warnings.push(
+        'No invoice was raised: GHL_INVOICE_TAX_ID is not set, so GST could not be applied. ' +
+          'GoHighLevel rejects a tax line without the id of a tax record in the account. ' +
+          'Everything else landed — set it and replay this event.',
+      );
+      return [];
+    }
+    if (contract.gross_inc_tax === null || contract.tax_on_gross === null) {
+      warnings.push(
+        'No invoice was raised: the contract total could not be read, so the GST could not be worked out. Everything else landed.',
+      );
+      return [];
+    }
+
+    // Independent cross-check. Pylon prints its own GST on the contract; if our
+    // arithmetic disagrees with it, something has changed in how Pylon reports
+    // and the invoice must not go out on our figure alone.
+    const pylonTax = moneyFromFormatted(contract.total_tax_formatted);
+    if (pylonTax !== null && Math.abs(pylonTax - contract.tax_on_gross) > 0.01) {
+      warnings.push(
+        `No invoice was raised: our GST (${contract.tax_on_gross}) disagrees with the figure on the Pylon contract (${pylonTax}). ` +
+          'Refusing to send a tax invoice on a number we cannot reconcile. Everything else landed.',
+      );
+      logger.warn('GST cross-check failed', { ours: contract.tax_on_gross, pylon: pylonTax });
+      return [];
+    }
+
+    const currency = render(section?.currency, payload) || contract.currency || 'AUD';
+    const business = await this.invoiceBusinessDetails();
+    const businessName = render(section?.businessName, payload);
+    if (businessName) business.name = businessName;
+    const businessAbn = render(section?.businessAbn, payload);
+
+    const tax = {
+      _id: this.config.ghl.invoiceTaxId,
+      name: this.config.ghl.invoiceTaxName,
+      rate: this.config.ghl.invoiceTaxRate,
+      calculation: this.config.ghl.invoiceTaxCalculation,
+    };
+
+    const items = [
+      {
+        name: render(section?.systemLineName, payload) || contract.name || 'Energy system installation',
+        description: render(section?.systemLineDescription, payload) || '',
+        amount: contract.net_of_tax,
+        qty: 1,
+        currency,
+        taxes: [tax],
+      },
+      // One line per rebate. There is usually more than one: a job with a
+      // battery carries a solar STC incentive AND a battery STC incentive.
+      ...(contract.rebate_lines ?? []).map((rebate) => ({
+        name: `Less ${rebate.description}${rebate.quantity ? ` (${rebate.quantity} x)` : ''}`,
+        amount: -rebate.amount,
+        qty: 1,
+        currency,
+        // Deliberately no taxes[]: the incentives are GST exclusive on the
+        // contract, and taxing them would change the GST on the whole invoice.
+      })),
+    ];
+
+    const issueDate = toIsoDate(new Date().toISOString());
+    const schedules = (section?.stages ?? [])
+      .map((stage) => ({
+        value: stagePercent(stage, section.stages),
+        dueDate: addDays(issueDate, stage.dueDays ?? this.config.ghl.invoiceDueDays),
+      }))
+      .filter((s) => Number.isFinite(s.value) && s.value > 0);
+
+    const invoiceBody = {
+      name: render(section?.invoiceName, payload) || contract.name || 'Energy system installation',
+      currency,
+      businessDetails: business,
+      contactDetails: {
+        id: contactId,
+        name: payload.client.name,
+        email: payload.client.email,
+        ...(payload.client.phone_e164 ? { phoneNo: payload.client.phone_e164 } : {}),
+      },
+      items,
+      discount: { type: 'percentage', value: 0 },
+      issueDate,
+      // Must be on or after the last instalment, or GoHighLevel rejects the
+      // whole invoice with "Payment schedule be less than invoice due date".
+      dueDate: schedules.length ? schedules.at(-1).dueDate : addDays(issueDate, this.config.ghl.invoiceDueDays),
+      liveMode: this.config.ghl.invoiceLiveMode,
+      sentTo: { email: payload.client.email ? [payload.client.email] : [] },
+    };
+    if (schedules.length > 1) invoiceBody.paymentSchedule = { type: 'percentage', schedules };
+
+    let terms = render(section?.termsNotes, payload);
+    if (businessAbn) terms = `${terms ?? ''}<p>ABN: ${businessAbn}</p>`;
+    if (terms) invoiceBody.termsNotes = terms;
+
+    let invoice;
+    try {
+      invoice = await this.ghl.createInvoice(invoiceBody);
+    } catch (error) {
+      warnings.push(
+        error.status === 401
+          ? 'No invoice was raised: the GoHighLevel token is missing the "invoices.write" scope. Everything else landed.'
+          : `No invoice was raised: ${error.message} Everything else landed.`,
+      );
+      logger.warn('single invoice creation failed', { error });
+      return [];
+    }
+
+    const id = invoice._id ?? invoice.id;
+    this.store?.recordInvoice(payload.project.id, KEY, { id, amount: contract.total_amount });
+    logger.info('contract invoiced', { invoiceId: id, total: contract.total_amount, tax: contract.tax_on_gross });
+    return [{ key: KEY, id, amount: contract.total_amount, sent: false }];
   }
 
   async invoiceBusinessDetails() {
@@ -940,4 +1093,31 @@ export function stageAmounts(stages = [], contractTotal) {
   }
 
   return amounts;
+}
+
+/**
+ * A stage's share of the contract as a percentage, for the instalment schedule.
+ *
+ * The last stage is a REMAINDER rather than a fixed 30%, so that the three
+ * always add up to the contract exactly. Here that has to become a number, so
+ * it is whatever the fixed stages leave behind.
+ */
+export function stagePercent(stage, stages = []) {
+  if (Number.isFinite(Number(stage.percent))) return Number(stage.percent);
+  if (stage.remainder) {
+    const fixed = stages
+      .filter((s) => s !== stage && Number.isFinite(Number(s.percent)))
+      .reduce((sum, s) => sum + Number(s.percent), 0);
+    return Math.round((100 - fixed) * 100) / 100;
+  }
+  return NaN;
+}
+
+/** "$4,508.36" -> 4508.36. Returns null when there is nothing to read. */
+export function moneyFromFormatted(text) {
+  if (text === null || text === undefined) return null;
+  const digits = String(text).replace(/[^0-9.-]/g, '');
+  if (!digits || digits === '-' || digits === '.') return null;
+  const value = Number(digits);
+  return Number.isFinite(value) ? value : null;
 }

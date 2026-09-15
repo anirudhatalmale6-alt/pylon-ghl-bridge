@@ -210,9 +210,40 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
       }
       for (const [i, item] of (body?.items ?? []).entries()) {
         if (!item.currency) errors.push(`items.${i}.currency should not be empty`);
+        // Copied from the live API: a tax line is refused unless it names an
+        // existing tax record. `taxId` is NOT accepted - it must be `_id`.
+        for (const [j, t] of (item.taxes ?? []).entries()) {
+          if (!t?._id) errors.push(`items.${i}.taxes.${j}._id should not be empty`);
+        }
+      }
+      // Live rule, undocumented: every instalment must fall before the
+      // invoice's own due date, or the whole invoice is rejected.
+      const schedules = body?.paymentSchedule?.schedules ?? [];
+      for (const sch of schedules) {
+        if (body?.dueDate && sch?.dueDate && sch.dueDate > body.dueDate) {
+          return json(res, 400, { status: 400, message: 'Error: Payment schedule be less than invoice due date' });
+        }
       }
       if (errors.length) return json(res, 422, { status: 422, message: 'Unprocessable Entity Exception', error: errors });
-      return json(res, 200, { invoice: { _id: 'inv-1', ...body } });
+      // Mirror the live API's arithmetic: tax only on lines that carry a
+      // taxes[] entry, subTotal across every line including negative ones.
+      const lines = body?.items ?? [];
+      const subTotal = lines.reduce((sum, it) => sum + Number(it.amount ?? 0) * Number(it.qty ?? 1), 0);
+      const taxTotal = lines.reduce((sum, it) => {
+        const rate = (it.taxes ?? []).reduce((r, t) => r + Number(t.rate ?? 0), 0);
+        return sum + (Number(it.amount ?? 0) * Number(it.qty ?? 1) * rate) / 100;
+      }, 0);
+      const round2 = (n) => Math.round(n * 100) / 100;
+      const total = round2(subTotal + taxTotal);
+      return json(res, 200, {
+        invoice: {
+          _id: 'inv-1',
+          ...body,
+          total,
+          amountDue: total,
+          totalSummary: { subTotal: round2(subTotal), discount: 0, tax: round2(taxTotal) },
+        },
+      });
     }
 
     if (req.method === 'POST' && /^\/invoices\/[^/]+\/send$/.test(url.pathname)) {

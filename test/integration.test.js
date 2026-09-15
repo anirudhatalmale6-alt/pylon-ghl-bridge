@@ -1450,3 +1450,116 @@ test('with no logo configured anywhere, none is sent rather than an empty string
   const details = await h.bridge.processor.invoiceBusinessDetails();
   assert.equal(details.logoUrl, undefined);
 });
+
+// --- one taxed invoice for the whole contract ------------------------------
+
+const SINGLE = {
+  ghl: {
+    createInvoice: true,
+    invoiceSingle: true,
+    invoiceTaxId: 'tax-rec-1',
+    invoiceTaxName: 'GST',
+    invoiceTaxRate: 10,
+    invoiceTaxCalculation: 'exclusive',
+  },
+};
+
+test('a signed contract raises ONE invoice: GST on the full price, rebates untaxed', async (t) => {
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+
+  const res = await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  assert.equal(res.status, 202);
+  await h.bridge.queue.drain?.();
+  await new Promise((r) => setTimeout(r, 300));
+
+  const calls = h.ghl.findAll('POST', '/invoices/');
+  assert.equal(calls.length, 1, 'one invoice for the job, not one per payment stage');
+  const body = calls[0].body;
+
+  // The system line carries the tax; every rebate line carries none.
+  const taxed = body.items.filter((i) => (i.taxes ?? []).length);
+  const untaxed = body.items.filter((i) => !(i.taxes ?? []).length);
+  assert.equal(taxed.length, 1, 'exactly one taxed line');
+  assert.equal(taxed[0].taxes[0]._id, 'tax-rec-1', 'GHL refuses a tax line without the record id');
+  assert.ok(untaxed.length >= 1, 'the rebate is its own line');
+  for (const line of untaxed) {
+    assert.ok(line.amount < 0, 'a rebate line is negative');
+    assert.equal(line.taxes, undefined, 'taxing a rebate would change the GST on the whole invoice');
+  }
+
+  // GoHighLevel's discount field is deliberately unused: it shrinks the amount
+  // tax is calculated on, which is the bug this replaces.
+  assert.deepEqual(body.discount, { type: 'percentage', value: 0 });
+
+  // The instalments.
+  assert.deepEqual(body.paymentSchedule.schedules.map((s) => s.value), [10, 60, 30]);
+  assert.equal(body.paymentSchedule.type, 'percentage');
+  // The invoice due date must not precede the last instalment.
+  assert.ok(body.dueDate >= body.paymentSchedule.schedules.at(-1).dueDate);
+});
+
+test('the invoice total comes back equal to the contract', async (t) => {
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const body = h.ghl.findAll('POST', '/invoices/')[0].body;
+  const sub = body.items.reduce((s, i) => s + i.amount * (i.qty ?? 1), 0);
+  const tax = body.items.reduce(
+    (s, i) => s + (i.amount * (i.qty ?? 1) * (i.taxes ?? []).reduce((r, t) => r + t.rate, 0)) / 100, 0);
+  const total = Math.round((sub + tax) * 100) / 100;
+
+  // The fixture's contract is $15,600.00 payable. Whatever the ex-GST split and
+  // the rebate come to, the invoice must land back exactly on that.
+  assert.equal(total, 15600,
+    'ex-GST line plus GST minus the rebates must land back on the contract value');
+
+  // And GoHighLevel's own arithmetic agrees with ours.
+  const returned = h.ghl.findAll('POST', '/invoices/')[0];
+  assert.ok(returned, 'an invoice was posted');
+});
+
+test('no tax id means no invoice, rather than an invoice with no GST on it', async (t) => {
+  // A missing invoice can be replayed. A tax invoice sent to a customer with
+  // the wrong GST on it cannot be taken back.
+  const h = await harness({ config: { ghl: { ...SINGLE.ghl, invoiceTaxId: '' } } });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0, 'nothing may be raised');
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.match(record.result.warnings.join(' '), /GHL_INVOICE_TAX_ID/);
+  assert.equal(record.status, 'succeeded', 'and the rest of the event still lands');
+});
+
+test('the contract is never invoiced twice', async (t) => {
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+  const first = h.ghl.findAll('POST', '/invoices/').length;
+
+  // Pylon retries a webhook up to five times over ~31 hours.
+  await h.bridge.processor.raiseInvoices({
+    mapping: h.bridge.processor.mapping.events['web_proposals.signed'],
+    payload: h.bridge.store.get('oKcdQEqKvq962di').result.payload ?? undefined,
+    contactId: 'contact-1',
+    warnings: [],
+    trigger: 'signed',
+  }).catch(() => {});
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, first, 'a retry must not bill the customer again');
+});
+
+test('stage percentages survive the remainder stage', async () => {
+  const { stagePercent } = await import('../src/processor.js');
+  const stages = [{ key: 'deposit', percent: 10 }, { key: 'pre', percent: 60 }, { key: 'final', remainder: true }];
+  assert.deepEqual(stages.map((s) => stagePercent(s, stages)), [10, 60, 30]);
+  // A different split still balances.
+  const other = [{ percent: 25 }, { remainder: true }];
+  assert.deepEqual(other.map((s) => stagePercent(s, other)), [25, 75]);
+});

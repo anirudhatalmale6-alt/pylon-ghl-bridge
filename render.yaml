@@ -77,6 +77,17 @@ services:
       - key: GHL_INVOICE_LOGO_URL
         sync: false
 
+      # ONE tax invoice for the whole contract with the 10/60/30 as instalments,
+      # instead of three separate invoices. Off until deliberately switched on.
+      - key: GHL_INVOICE_SINGLE
+        value: "false"
+      # GoHighLevel's internal id for the account's GST record. Not shown
+      # anywhere in their interface, and /invoices/taxes returns 500, so it has
+      # to be lifted from an invoice built by hand. Without it no GST can be
+      # applied and the bridge refuses to raise the invoice at all.
+      - key: GHL_INVOICE_TAX_ID
+        sync: false
+
       - key: GHL_INVOICE_SEND_ACTION
         value: none
       - key: GHL_INVOICE_DUE_DAYS
