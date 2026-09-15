@@ -1597,3 +1597,86 @@ test('instalment dates never go backwards, whatever the stage config says', asyn
   // final 30% before the 10% deposit.
   assert.deepEqual(body.paymentSchedule.schedules.map((s) => s.value), [10, 60, 30]);
 });
+
+// --- holding the invoice until a pipeline stage ----------------------------
+
+const ON_STAGE = { ghl: { ...SINGLE.ghl, invoiceOnStage: true } };
+
+test('with the hold on, signing does everything EXCEPT the invoice', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0, 'the invoice waits');
+
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.equal(record.status, 'succeeded');
+  assert.deepEqual(record.result.warnings ?? [], [], 'holding it back is not a problem to report');
+  // Everything else still has to happen at signature.
+  assert.ok(record.result.contactId, 'the contact is still updated');
+  assert.ok(record.result.opportunityId, 'the opportunity still moves');
+  assert.ok(record.result.contractFileUrl, 'the signed PDF is still filed');
+});
+
+test('the stage endpoint then raises it from the figures frozen at signature', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0);
+
+  const res = await fetch(`${h.bridge.base}/invoices/contract`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer admin-test-token' },
+    body: JSON.stringify({ contactId: 'contact-1' }),
+  });
+  const json = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(json.ok, true, JSON.stringify(json));
+  assert.deepEqual(json.warnings, []);
+
+  const calls = h.ghl.findAll('POST', '/invoices/');
+  assert.equal(calls.length, 1, 'now it is raised');
+  const body = calls[0].body;
+  // The same shape as a signature-time invoice: taxed system line, untaxed
+  // rebates, instalments in order.
+  assert.equal(body.items.filter((i) => (i.taxes ?? []).length).length, 1);
+  assert.ok(body.items.some((i) => i.amount < 0), 'the rebate line survived the round trip');
+  assert.deepEqual(body.paymentSchedule.schedules.map((s) => s.value), [10, 60, 30]);
+  const dates = body.paymentSchedule.schedules.map((s) => s.dueDate);
+  assert.deepEqual(dates, [...dates].sort());
+});
+
+test('the held invoice is still only raised once', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const call = () => fetch(`${h.bridge.base}/invoices/contract`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer admin-test-token' },
+    body: JSON.stringify({ contactId: 'contact-1' }),
+  }).then((r) => r.json());
+
+  const first = await call();
+  const second = await call();
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 1, 'a workflow firing twice must not bill twice');
+  assert.equal(second.invoices[0].alreadyExisted, true);
+  assert.equal(second.invoices[0].id, first.invoices[0].id);
+});
+
+test('an unknown customer is refused rather than guessed at', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+  const res = await fetch(`${h.bridge.base}/invoices/contract`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer admin-test-token' },
+    body: JSON.stringify({ contactId: 'nobody-here' }),
+  });
+  assert.equal(res.status, 404);
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0);
+});

@@ -85,6 +85,11 @@ services:
       # anywhere in their interface, and /invoices/taxes returns 500, so it has
       # to be lifted from an invoice built by hand. Without it no GST can be
       # applied and the bridge refuses to raise the invoice at all.
+      # Hold the invoice until the opportunity reaches the agreed pipeline
+      # stage instead of raising it at signature. Everything else still happens
+      # on signing. Needs a GoHighLevel workflow calling POST /invoices/contract.
+      - key: GHL_INVOICE_ON_STAGE
+        value: "false"
       - key: GHL_INVOICE_TAX_ID
         sync: false
 

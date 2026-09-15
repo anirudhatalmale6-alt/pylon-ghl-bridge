@@ -6,7 +6,7 @@ import { PylonClient, verifyWebhookSignature } from './pylon.js';
 import { GhlClient } from './ghl.js';
 import { EventStore } from './store.js';
 import { RetryQueue } from './queue.js';
-import { Processor, SIGNED_EVENT } from './processor.js';
+import { Processor, SIGNED_EVENT, CONTRACT_INVOICE_KEY } from './processor.js';
 import { createNotifier, buildSummary } from './callback.js';
 import { loadMapping } from './mapping.js';
 import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
@@ -221,8 +221,103 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
    * Safe to call twice: a stage already invoiced returns the existing invoice
    * rather than billing the customer again.
    */
+  /**
+   * The whole-contract invoice, raised when the opportunity reaches the agreed
+   * pipeline stage rather than at signature.
+   *
+   * Driven by a GoHighLevel workflow, which sends only a contact id. Everything
+   * else is rebuilt from the figures frozen when the contract was signed — the
+   * customer signed for those numbers, and re-reading Pylon days later could
+   * invoice a total that has since been edited.
+   */
+  async function raiseContractInvoice(req, res) {
+    const { projectId, opportunityId, contactId, reference } = req.body ?? {};
+    if (!projectId && !opportunityId && !contactId && !reference) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Send one of projectId, opportunityId, contactId or reference so the contract can be identified.',
+      });
+    }
+
+    const found = store.findLinkBy({ projectId: projectId || reference, opportunityId, contactId });
+    if (!found) {
+      return res.status(404).json({
+        ok: false,
+        error:
+          'No signed contract is on record for that customer, so there is nothing to invoice. ' +
+          'The contract has to have come through this bridge first.',
+      });
+    }
+
+    const { projectId: linkedProjectId, link } = found;
+    const basis = link.invoiceBasis;
+    if (!basis) {
+      return res.status(409).json({
+        ok: false,
+        error:
+          'That contract was signed before the invoice figures started being recorded, so there is nothing to build ' +
+          'an invoice from. Replay the signature event and try again.',
+      });
+    }
+
+    const warnings = [];
+    if (found.ambiguous) {
+      warnings.push(
+        `This customer has ${found.matchCount} signed jobs on record. The most recent one ` +
+          `(${link.reference ?? linkedProjectId}) was invoiced. Send "reference" or "opportunityId" ` +
+          'instead of "contactId" to pick a specific job.',
+      );
+    }
+
+    // Rebuilt in the same shape normalize() produces, so raiseSingleInvoice
+    // cannot tell the difference between this and a live signature.
+    const payload = {
+      project: { id: linkedProjectId, reference_number: link.reference ?? '' },
+      client: {
+        name: link.contactName ?? '',
+        email: link.contactEmail ?? '',
+        phone: link.contactPhone ?? '',
+        phone_e164: basis.phoneE164 ?? '',
+        address: { full: basis.addressFull ?? '' },
+      },
+      contract: {
+        name: basis.name ?? '',
+        description: basis.description ?? '',
+        currency: link.currency ?? 'AUD',
+        total_amount: link.contractTotal ?? null,
+        total_amount_formatted: basis.totalAmountFormatted ?? null,
+        total_tax_formatted: basis.totalTaxFormatted ?? null,
+        line_items_summary: basis.lineItemsSummary ?? '',
+        rebate_lines: basis.rebateLines ?? [],
+        gross_inc_tax: basis.grossIncTax ?? null,
+        tax_on_gross: basis.taxOnGross ?? null,
+        net_of_tax: basis.netOfTax ?? null,
+      },
+    };
+
+    try {
+      const raised = await processor.raiseInvoices({
+        mapping: processor.mapping.events[SIGNED_EVENT],
+        payload,
+        contactId: link.contactId,
+        warnings,
+        trigger: 'manual',
+        only: CONTRACT_INVOICE_KEY,
+      });
+      const ok = raised.length > 0;
+      return res.status(200).json({ ok, invoices: raised, warnings });
+    } catch (error) {
+      logger.error('contract invoice failed', { error, projectId: linkedProjectId });
+      return res.status(502).json({ ok: false, error: error.message });
+    }
+  }
+
   app.post('/invoices/:stageKey', requireAdmin(config), express.json({ limit: '256kb' }), async (req, res) => {
     const { stageKey } = req.params;
+    // "contract" is the whole-job invoice, not one of the payment stages. It is
+    // raised when the opportunity reaches the agreed pipeline stage, from the
+    // figures frozen at signature.
+    if (stageKey === CONTRACT_INVOICE_KEY) return raiseContractInvoice(req, res);
     const { projectId, opportunityId, contactId, reference } = req.body ?? {};
 
     if (!projectId && !opportunityId && !contactId && !reference) {

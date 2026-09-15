@@ -54,6 +54,7 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       invoiceBankDebitOnly: undefined,
       invoiceLogoUrl: '',
       invoiceSingle: false,
+      invoiceOnStage: false,
       invoiceTaxId: '',
       invoiceTaxName: 'GST',
       invoiceTaxRate: 10,

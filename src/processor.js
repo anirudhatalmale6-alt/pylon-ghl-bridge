@@ -3,6 +3,7 @@ import { logger } from './lib/logger.js';
 import { eventRelationships, normalizePaymentEvent, normalizeSignedEvent, toE164 } from './normalize.js';
 import { buildCustomFields, cleanCustomFields, indexCustomFields, render, renderObject, toIsoDate } from './mapping.js';
 
+export const CONTRACT_INVOICE_KEY = 'contract';
 export const SIGNED_EVENT = 'web_proposals.signed';
 export const PAYMENT_EVENT = 'gateway_payments.created';
 
@@ -247,6 +248,28 @@ export class Processor {
       currency: payload.contract.currency,
       reference: payload.project.reference_number,
       contactPhone: payload.client.phone,
+      /**
+       * Everything the invoice needs, frozen at signature.
+       *
+       * When the invoice is held until a later pipeline stage, that can be days
+       * afterwards and the request arrives from a GoHighLevel workflow carrying
+       * nothing but a contact id. Rather than call Pylon again then — and risk
+       * invoicing a figure that has since been edited — the numbers the customer
+       * actually signed for are kept here.
+       */
+      invoiceBasis: {
+        name: payload.contract.name,
+        description: payload.contract.description,
+        addressFull: payload.client.address?.full ?? '',
+        phoneE164: payload.client.phone_e164 ?? '',
+        lineItemsSummary: payload.contract.line_items_summary ?? '',
+        totalTaxFormatted: payload.contract.total_tax_formatted ?? null,
+        totalAmountFormatted: payload.contract.total_amount_formatted ?? null,
+        rebateLines: payload.contract.rebate_lines ?? [],
+        grossIncTax: payload.contract.gross_inc_tax ?? null,
+        taxOnGross: payload.contract.tax_on_gross ?? null,
+        netOfTax: payload.contract.net_of_tax ?? null,
+      },
     });
 
     return {
@@ -407,7 +430,13 @@ export class Processor {
     // One invoice for the whole contract, raised once at signing. The manual
     // per-stage endpoints are left alone: a GHL workflow may still be calling
     // them, and silently doing nothing would be worse than doing the old thing.
-    if (this.config.ghl.invoiceSingle && trigger === 'signed' && !only) {
+    if (this.config.ghl.invoiceSingle && (trigger === 'signed' || only === CONTRACT_INVOICE_KEY) && only !== '__stages__') {
+      // Held until the opportunity reaches the configured stage. The signature
+      // still does everything else; only the billing waits.
+      if (this.config.ghl.invoiceOnStage && trigger === 'signed') {
+        logger.info('invoice held until the pipeline stage is reached', { project: payload.project.id });
+        return [];
+      }
       return this.raiseSingleInvoice({ section, payload, contactId, warnings });
     }
 
@@ -562,7 +591,7 @@ export class Processor {
    */
   async raiseSingleInvoice({ section, payload, contactId, warnings }) {
     const contract = payload.contract ?? {};
-    const KEY = 'contract';
+    const KEY = CONTRACT_INVOICE_KEY;
 
     const already = this.store?.lookupProject(payload.project.id)?.invoices?.[KEY];
     if (already) {

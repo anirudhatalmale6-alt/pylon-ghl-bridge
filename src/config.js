@@ -153,6 +153,12 @@ export const config = {
     // three tax invoices makes the tax awkward to state on any of them.
     invoiceSingle: bool(process.env.GHL_INVOICE_SINGLE, false),
 
+    // Hold the invoice until the opportunity reaches a later pipeline stage,
+    // rather than raising it the moment the contract is signed. Everything else
+    // still happens at signature — only the billing waits. Driven by a
+    // GoHighLevel workflow calling POST /invoices/contract.
+    invoiceOnStage: bool(process.env.GHL_INVOICE_ON_STAGE, false),
+
     // The GoHighLevel tax record to apply to the system line.
     //
     // `taxId` here is GHL's internal record id, which is NOT shown anywhere in
