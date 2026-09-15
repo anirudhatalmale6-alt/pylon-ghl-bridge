@@ -1680,3 +1680,37 @@ test('an unknown customer is refused rather than guessed at', async (t) => {
   assert.equal(res.status, 404);
   assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0);
 });
+
+test("a GoHighLevel workflow's own field names are accepted", async () => {
+  const { identifiersFrom } = await import('../src/app.js');
+  // GHL's webhook action posts its "standard data" in snake case. If the person
+  // building the workflow forgets the Custom Data step, that is all we get -
+  // and the cost of not accepting it is an invoice that silently never happens.
+  assert.equal(identifiersFrom({ contact_id: 'abc' }).contactId, 'abc');
+  assert.equal(identifiersFrom({ contactId: 'abc' }).contactId, 'abc');
+  assert.equal(identifiersFrom({ customData: { contactId: 'abc' } }).contactId, 'abc');
+  assert.equal(identifiersFrom({ custom_data: { contact_id: 'abc' } }).contactId, 'abc');
+  // Nothing usable must stay undefined so the caller returns a 400 rather than
+  // looking up a blank id.
+  assert.equal(identifiersFrom({}).contactId, undefined);
+  assert.equal(identifiersFrom({ contact_id: '   ' }).contactId, undefined);
+  assert.equal(identifiersFrom(null).contactId, undefined);
+});
+
+test('the stage endpoint works from a raw GoHighLevel webhook body', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  // Exactly what GHL sends when no Custom Data is configured.
+  const res = await fetch(`${h.bridge.base}/invoices/contract`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: 'Bearer admin-test-token' },
+    body: JSON.stringify({ contact_id: 'contact-1', first_name: 'Test', email: 'a@b.c', workflow: { id: 'wf1' } }),
+  });
+  const json = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(json.ok, true, JSON.stringify(json));
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 1);
+});

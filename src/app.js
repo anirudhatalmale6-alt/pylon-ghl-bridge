@@ -231,7 +231,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
    * invoice a total that has since been edited.
    */
   async function raiseContractInvoice(req, res) {
-    const { projectId, opportunityId, contactId, reference } = req.body ?? {};
+    const { projectId, opportunityId, contactId, reference } = identifiersFrom(req.body);
     if (!projectId && !opportunityId && !contactId && !reference) {
       return res.status(400).json({
         ok: false,
@@ -483,4 +483,34 @@ async function probe(fn) {
     const payload = error instanceof IntegrationError ? error.toJSON() : { message: String(error?.message ?? error) };
     return { ok: false, error: payload.message, kind: payload.kind };
   }
+}
+
+/**
+ * Pulls the identifiers out of whatever the caller sent.
+ *
+ * A GoHighLevel workflow's webhook posts its own "standard data" using snake
+ * case — `contact_id`, not `contactId` — and only sends a JSON body of your own
+ * shape if someone remembers to add Custom Data items. Accepting both spellings
+ * means the workflow works whether or not that step was done, which is worth it:
+ * the failure it prevents is an invoice that never gets raised, discovered days
+ * later by a customer who was never billed.
+ */
+export function identifiersFrom(body = {}) {
+  const b = body ?? {};
+  const custom = b.customData ?? b.custom_data ?? {};
+  const pick = (...names) => {
+    for (const source of [b, custom]) {
+      for (const name of names) {
+        const value = source?.[name];
+        if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+      }
+    }
+    return undefined;
+  };
+  return {
+    contactId: pick('contactId', 'contact_id', 'contactid'),
+    opportunityId: pick('opportunityId', 'opportunity_id'),
+    projectId: pick('projectId', 'project_id', 'pylonProjectId'),
+    reference: pick('reference', 'referenceNumber', 'reference_number'),
+  };
 }
