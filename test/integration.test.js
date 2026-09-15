@@ -1117,11 +1117,14 @@ test('an empty Pylon reference number falls back to the project id', async (t) =
   // Every project in the live account has an empty reference_number, so without
   // a fallback the payment reference on the invoice would be blank and an
   // incoming transfer could not be matched to a job.
+  // Matched case-insensitively and without the label's exact wording, so
+  // rephrasing the terms does not break a test that is about the FALLBACK.
   const rendered = render(terms, { project: { reference_number: '', id: '1mX7DYluA' } });
-  assert.match(rendered, /Reference: 1mX7DYluA/);
+  assert.match(rendered, /reference:<\/strong> 1mX7DYluA/i);
 
   const withRef = render(terms, { project: { reference_number: 'PYL-1', id: '1mX7DYluA' } });
-  assert.match(withRef, /Reference: PYL-1/, 'a real reference still wins');
+  assert.match(withRef, /reference:<\/strong> PYL-1/i, 'a real reference still wins');
+  assert.doesNotMatch(withRef, /1mX7DYluA/, 'and the project id is not shown as well');
 });
 
 test('the service starts without a webhook secret, and rejects every webhook', async (t) => {
