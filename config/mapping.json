@@ -81,7 +81,7 @@
             "remainder": true
           }
         ],
-        "termsNotes": "<p>Payment by bank transfer.</p><p>Account name: {{env.BANK_NAME}}<br>BSB: {{env.BANK_BSB}}<br>Account number: {{env.BANK_ACCOUNT}}<br>Reference: {{project.reference_number || project.id}}</p><p>Please quote the reference above so we can match your payment.</p>",
+        "termsNotes": "<p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{project.reference_number || project.id}} when making payment</p>",
         "businessName": "{{env.BUSINESS_NAME}}",
         "businessAbn": "{{env.BUSINESS_ABN}}",
         "invoiceName": "{{contract.name}} - {{project.reference_number || project.id}}",
