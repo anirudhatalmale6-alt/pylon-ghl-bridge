@@ -150,3 +150,71 @@ test('a payment event normalises amount, purpose and receipt', () => {
 test('an unknown filter fails loudly instead of writing rubbish', () => {
   assert.throws(() => render('{{contract.title | shout}}', payload), /Unknown filter "shout"/);
 });
+
+// --- invoice basis: two rebates, from a real signed contract ---------------
+
+test('a job with BOTH solar and battery STCs produces the contract figures', async () => {
+  const { rebateLines, invoiceBasis } = await import('../src/normalize.js');
+  // Straight off the client's signed contract:
+  //   System Price incl. GST                      $49,592.00
+  //   Included GST                                 $4,508.36
+  //   Less STC Incentive        118 x $37.00      -$4,366.00  GST exclusive
+  //   Less Battery STC Incentive 164 x $37.00     -$6,068.00  GST exclusive
+  //   Total Price Payable                         $39,158.00
+  const lineItems = [
+    { description: 'Solar Panel Risen N-Type', total_amount: 4959200, quantity: 36 },
+    { description: 'STCs', total_amount: -436600, quantity: 118 },
+    { description: 'Battery STCs', total_amount: -606800, quantity: 164 },
+  ];
+
+  const rebates = rebateLines(lineItems);
+  assert.equal(rebates.length, 2, 'both incentives must survive — most of their jobs have two');
+  assert.deepEqual(rebates.map((r) => r.amount), [4366, 6068]);
+  assert.deepEqual(rebates.map((r) => r.quantity), [118, 164]);
+
+  const basis = invoiceBasis(3915800, lineItems, 'AUD');
+  assert.equal(basis.rebates_total, 10434);
+  assert.equal(basis.gross_inc_tax, 49592, 'payable plus every rebate is the price tax applies to');
+  assert.equal(basis.tax_on_gross, 4508.36, "matches the GST Pylon prints on the contract");
+  assert.equal(basis.net_of_tax, 45083.64);
+  assert.equal(basis.tax_on_gross_formatted, '$4,508.36');
+
+  // The whole point: the invoice must still add up to what the customer signed for.
+  assert.equal(basis.gross_inc_tax - basis.rebates_total, 39158);
+});
+
+test('counting only one rebate reproduces the wrong tax figure', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  // The mistake this guards against: using the single rebate that happened to be
+  // visible. Dropping the solar STC line gives $4,111.45 instead of $4,508.36.
+  const onlyBattery = [{ description: 'Battery STCs', total_amount: -606800, quantity: 164 }];
+  assert.equal(invoiceBasis(3915800, onlyBattery, 'AUD').tax_on_gross, 4111.45);
+});
+
+test('a single-rebate job still works, and matches what Pylon reports', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  // The other job reconciled by hand: $169.00 payable, $2,331.00 of STCs,
+  // Pylon reports $2,272.73 ex GST and $227.27 GST.
+  const basis = invoiceBasis(16900, [{ description: 'STCs', total_amount: -233100, quantity: 63 }], 'AUD');
+  assert.equal(basis.gross_inc_tax, 2500);
+  assert.equal(basis.tax_on_gross, 227.27);
+  assert.equal(basis.net_of_tax, 2272.73);
+});
+
+test('no total means no invented tax figure', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  for (const bad of [null, undefined, 'abc']) {
+    const basis = invoiceBasis(bad, [{ total_amount: -100 }], 'AUD');
+    assert.equal(basis.tax_on_gross, null, `a ${String(bad)} total must not produce a tax figure`);
+    assert.equal(basis.gross_inc_tax, null);
+  }
+});
+
+test('hidden rebate lines are skipped, matching the visible summary', async () => {
+  const { rebateLines } = await import('../src/normalize.js');
+  const items = [
+    { description: 'STCs', total_amount: -436600, quantity: 118 },
+    { description: 'internal adjustment', total_amount: -50000, quantity: 1, is_line_hidden: true },
+  ];
+  assert.deepEqual(rebateLines(items).map((r) => r.description), ['STCs']);
+});

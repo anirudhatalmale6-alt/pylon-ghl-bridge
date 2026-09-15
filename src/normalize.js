@@ -188,7 +188,10 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
     currency,
     total_amount: totalMajor,
     total_amount_cents: pricing.total ?? null,
-    total_includes_tax: pricing.total_includes_tax ?? null,
+    // total_includes_tax is declared once, in the tax block below, alongside the
+    // two GST figures it governs. It used to appear here as well — identical, so
+    // harmless, but a duplicate key in an object literal is silently won by the
+    // last one, which makes editing the first copy a no-op.
     total_amount_formatted: quote.total_price_formatted || formatMoney(totalMajor, currency),
     total_tax_formatted: quote.total_tax_formatted ?? null,
     deposit_amount_formatted: quote.deposit_amount_formatted ?? null,
@@ -258,6 +261,32 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
     stc_quantity: quote.locale_au?.stc_quantity ?? null,
     stc_value_formatted: quote.locale_au?.stc_value_formatted ?? null,
 
+    /**
+     * The rebates as structured data, for building an invoice from.
+     *
+     * There is usually MORE THAN ONE. A job with a battery carries a solar STC
+     * incentive and a battery STC incentive as separate lines on the contract
+     * ("118 STCs x $37.00" and "164 Battery STCs x $37.00"), and the client says
+     * most of their jobs look like that. Anything that reads a single rebate —
+     * stc_value_formatted, or the first negative line — gets the arithmetic
+     * wrong on the majority of jobs.
+     */
+    rebate_lines: rebateLines(a.line_items),
+
+    /**
+     * The invoice arithmetic, in cents so it cannot drift.
+     *
+     * Pylon's total is what the customer PAYS, already net of every rebate. The
+     * price the tax is calculated on is that total with the rebates added back:
+     * the customer's consideration is the cash plus the certificates they sign
+     * over. Australian GST on a tax-inclusive figure is one eleventh.
+     *
+     * Verified against a real signed contract: $39,158.00 payable + $4,366.00 +
+     * $6,068.00 of rebates = $49,592.00, GST $4,508.36 — the figure Pylon itself
+     * prints on that contract.
+     */
+    ...invoiceBasis(pricing.total, a.line_items, currency),
+
     line_items: (a.line_items ?? []).map((item) => ({
       key: item.key,
       description: item.description,
@@ -270,6 +299,55 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
       component_id: item.component_id,
       hidden: Boolean(item.is_line_hidden),
     })),
+  };
+}
+
+/**
+ * Every rebate on the job, as positive amounts with their own descriptions.
+ *
+ * A rebate is a line item with a negative total. Hidden lines are skipped the
+ * same way the visible summary skips them.
+ */
+export function rebateLines(lineItems = []) {
+  return (lineItems ?? [])
+    .filter((item) => !item.is_line_hidden && Number(item.total_amount) < 0)
+    .map((item) => ({
+      description: item.description ?? item.key ?? 'Rebate',
+      quantity: Number(item.quantity) > 0 ? Number(item.quantity) : null,
+      amount_cents: Math.abs(Number(item.total_amount) || 0),
+      amount: centsToMajor(Math.abs(Number(item.total_amount) || 0)),
+    }));
+}
+
+/**
+ * The figures an invoice is built from, worked out in cents.
+ *
+ * Returns nulls rather than guesses when the total is missing — an invoice with
+ * an invented tax figure on it is far worse than one the bridge refuses to
+ * raise.
+ */
+export function invoiceBasis(totalCents, lineItems = [], currency = 'AUD') {
+  if (totalCents === null || totalCents === undefined || !Number.isFinite(Number(totalCents))) {
+    return {
+      rebates_total: null,
+      gross_inc_tax: null,
+      tax_on_gross: null,
+      net_of_tax: null,
+      tax_on_gross_formatted: null,
+    };
+  }
+  const payable = Number(totalCents);
+  const rebates = rebateLines(lineItems).reduce((sum, r) => sum + r.amount_cents, 0);
+  const gross = payable + rebates;
+  // Australian GST is one eleventh of a GST-inclusive amount. Rounded to the
+  // cent once, on the whole, rather than per line.
+  const tax = Math.round(gross / 11);
+  return {
+    rebates_total: centsToMajor(rebates),
+    gross_inc_tax: centsToMajor(gross),
+    tax_on_gross: centsToMajor(tax),
+    net_of_tax: centsToMajor(gross - tax),
+    tax_on_gross_formatted: formatMoney(centsToMajor(tax), currency),
   };
 }
 
