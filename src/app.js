@@ -309,6 +309,8 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
         line_items_summary_html: basis.lineItemsSummaryHtml ?? '',
         rebates_summary: basis.rebatesSummary ?? '',
         rebate_lines: basis.rebateLines ?? [],
+        rebate_lines_reconciled: basis.rebateLines ?? [],
+        rebates_reconciled: basis.rebatesReconciled !== false,
         gross_inc_tax: basis.grossIncTax ?? null,
         tax_on_gross: basis.taxOnGross ?? null,
         net_of_tax: basis.netOfTax ?? null,

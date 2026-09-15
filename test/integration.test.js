@@ -1800,3 +1800,73 @@ test('the equipment list is joined with <br>, not a newline', async () => {
   assert.match(plain, /\n/, 'the plain-text version keeps real newlines for anything not HTML');
   assert.match(html, /12 x AIKO Solar Neostar 2P \(525W\)<br>1 x FoxESS KH10/);
 });
+
+// --- rebates that are not all reported the same way ------------------------
+
+test('a job with PRCs as well as STCs reconciles to the signed total', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  // Straight off a real signed contract:
+  //   Subtotal incl. GST        38,820.00
+  //   Included GST               3,529.09
+  //   194 STCs + 164 Battery    -13,246.00   (API reports both as one line)
+  //   1,701 PRCs x $2.20         -3,742.20   (API reports -3,402.00, ex GST)
+  //   Total incl. GST           21,831.80
+  const items = [
+    { description: 'STCs', quantity: 194, total_amount: -1324600 },
+    { description: 'PRCs', quantity: 1701, total_amount: -340200 },
+  ];
+  const basis = invoiceBasis(2183180, items, 'AUD', { total_tax_formatted: '$3,529.09' });
+
+  assert.equal(basis.rebates_reconciled, true);
+  assert.equal(basis.gross_inc_tax, 38820, 'the subtotal on the contract');
+  assert.equal(basis.tax_on_gross, 3529.09, "Pylon's own GST figure is used, not a re-derived one");
+  assert.equal(basis.net_of_tax, 35290.91);
+  assert.equal(basis.gross_inc_tax - basis.rebates_total, 21831.8, 'must land on what the customer signed');
+
+  // The PRC is grossed up to the figure the contract actually deducts.
+  const prc = basis.rebate_lines_reconciled.find((r) => r.description === 'PRCs');
+  assert.equal(prc.amount, 3742.2);
+  assert.equal(prc.grossedUp, true);
+  const stc = basis.rebate_lines_reconciled.find((r) => r.description === 'STCs');
+  assert.equal(stc.amount, 13246, 'the STC line is already the figure deducted');
+  assert.equal(stc.grossedUp, false);
+});
+
+test('an STC-only job is unchanged by the reconciliation', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  const basis = invoiceBasis(16900, [{ description: 'STCs', quantity: 63, total_amount: -233100 }], 'AUD',
+    { total_tax_formatted: '$227.27' });
+  assert.equal(basis.rebates_reconciled, true);
+  assert.equal(basis.gross_inc_tax, 2500);
+  assert.equal(basis.tax_on_gross, 227.27);
+  assert.equal(basis.net_of_tax, 2272.73);
+});
+
+test('figures that cannot be reconciled produce no invoice', async () => {
+  const { invoiceBasis } = await import('../src/normalize.js');
+  // A GST figure that matches no arrangement of the rebates.
+  const basis = invoiceBasis(2183180, [{ description: 'STCs', quantity: 1, total_amount: -100000 }], 'AUD',
+    { total_tax_formatted: '$9,999.99' });
+  assert.equal(basis.rebates_reconciled, false);
+  assert.equal(basis.net_of_tax, null, 'no figures to build an invoice from');
+});
+
+test('the invoice is refused when the rebates do not reconcile', async (t) => {
+  const h = await harness({ config: SINGLE, pylon: { designOverrides: {} } });
+  t.after(() => h.close());
+  const warnings = [];
+  const raised = await h.bridge.processor.raiseSingleInvoice({
+    section: h.bridge.processor.mapping.events['web_proposals.signed'].invoices,
+    payload: {
+      project: { id: 'p1', reference_number: '' },
+      client: { name: 'A', email: 'a@b.c', phone_e164: '+61400000000', address: { full: '1 St' } },
+      contract: { name: 'Job', currency: 'AUD', total_amount: 100, rebates_reconciled: false,
+        total_tax_formatted: '$1.00', total_amount_formatted: '$100.00' },
+    },
+    contactId: 'contact-1',
+    warnings,
+  });
+  assert.deepEqual(raised, []);
+  assert.match(warnings.join(' '), /do not reconcile to the signed total/);
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0, 'nothing may be billed');
+});

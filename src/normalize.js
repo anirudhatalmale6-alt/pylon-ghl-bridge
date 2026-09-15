@@ -298,7 +298,7 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
      * $6,068.00 of rebates = $49,592.00, GST $4,508.36 — the figure Pylon itself
      * prints on that contract.
      */
-    ...invoiceBasis(pricing.total, a.line_items, currency),
+    ...invoiceBasis(pricing.total, a.line_items, currency, quote),
 
     line_items: (a.line_items ?? []).map((item) => ({
       key: item.key,
@@ -339,29 +339,112 @@ export function rebateLines(lineItems = []) {
  * an invented tax figure on it is far worse than one the bridge refuses to
  * raise.
  */
-export function invoiceBasis(totalCents, lineItems = [], currency = 'AUD') {
-  if (totalCents === null || totalCents === undefined || !Number.isFinite(Number(totalCents))) {
+/**
+ * Reconciles the rebate lines against what the customer actually signed for.
+ *
+ * Pylon's API does not report every rebate the same way. On a real contract:
+ *
+ *   Subtotal incl. GST          38,820.00
+ *   Included GST                 3,529.09
+ *   194 STCs                    -7,178.00      API: -13,246.00 (both STC lines)
+ *   164 Battery STCs            -6,068.00
+ *   1,701 PRCs x $2.20          -3,742.20      API: -3,402.00  (the EX-GST figure)
+ *   Total incl. GST             21,831.80
+ *
+ * The STC lines are GST free and the API figure is the one deducted. The PRC
+ * line is quoted ex GST but deducted at $2.20 a certificate — GST inclusive —
+ * and the API reports $2.00. Take the API figure at face value and the total
+ * is $340.20 short, which is exactly the GST on the PRCs.
+ *
+ * Rather than keep a list of which incentive is reported which way, this tries
+ * each rebate at face value or grossed up by the tax rate and returns the
+ * combination that reproduces the signed total exactly. No combination, no
+ * invoice — the caller refuses rather than guessing.
+ */
+export function reconcileRebates(rebates, payableCents, printedTaxCents, taxRate = 10) {
+  const n = rebates.length;
+  if (n > 12) return null; // 2^n; no real job is close
+  for (let mask = 0; mask < (1 << n); mask += 1) {
+    const lines = rebates.map((rebate, i) => {
+      const grossedUp = Boolean(mask & (1 << i));
+      const cents = grossedUp
+        ? Math.round(rebate.amount_cents * (1 + taxRate / 100))
+        : rebate.amount_cents;
+      return { ...rebate, amount_cents: cents, amount: centsToMajor(cents), grossedUp };
+    });
+    // The subtotal implied by this combination, and the GST inside it. Compared
+    // against Pylon's published tax rather than multiplying that tax back up:
+    // GST is one eleventh rounded to the cent, so tax x 11 loses a cent and
+    // nothing would ever reconcile.
+    const gross = payableCents + lines.reduce((sum, l) => sum + l.amount_cents, 0);
+    if (Math.round(gross / 11) === printedTaxCents) return { lines, grossCents: gross };
+  }
+  return null;
+}
+
+export function invoiceBasis(totalCents, lineItems = [], currency = 'AUD', quote = {}) {
+  const empty = {
+    rebates_total: null,
+    gross_inc_tax: null,
+    tax_on_gross: null,
+    net_of_tax: null,
+    tax_on_gross_formatted: null,
+    rebates_reconciled: false,
+  };
+  if (totalCents === null || totalCents === undefined || !Number.isFinite(Number(totalCents))) return empty;
+
+  const payable = Number(totalCents);
+  const rebates = rebateLines(lineItems);
+
+  /**
+   * GST comes from Pylon's own figure, not from arithmetic on the payable.
+   *
+   * The client's accountant confirmed the rule: no GST on the STCs, and the GST
+   * is calculated on the full quote total BEFORE any rebate comes off. That is
+   * exactly what Pylon prints on the contract as "Included GST", so use it
+   * rather than re-deriving it and hoping the two agree.
+   */
+  const printedTax = moneyCents(quote.total_tax_formatted);
+  if (printedTax === null) {
+    // No published figure to stand on. One eleventh of the payable plus the
+    // rebates is right whenever every rebate is GST free, which is the common
+    // case, but it is not reconciled so the caller can see that.
+    const rebateSum = rebates.reduce((sum, r) => sum + r.amount_cents, 0);
+    const gross = payable + rebateSum;
+    const tax = Math.round(gross / 11);
     return {
-      rebates_total: null,
-      gross_inc_tax: null,
-      tax_on_gross: null,
-      net_of_tax: null,
-      tax_on_gross_formatted: null,
+      rebates_total: centsToMajor(rebateSum),
+      gross_inc_tax: centsToMajor(gross),
+      tax_on_gross: centsToMajor(tax),
+      net_of_tax: centsToMajor(gross - tax),
+      tax_on_gross_formatted: formatMoney(centsToMajor(tax), currency),
+      rebate_lines_reconciled: rebates,
+      rebates_reconciled: false,
     };
   }
-  const payable = Number(totalCents);
-  const rebates = rebateLines(lineItems).reduce((sum, r) => sum + r.amount_cents, 0);
-  const gross = payable + rebates;
-  // Australian GST is one eleventh of a GST-inclusive amount. Rounded to the
-  // cent once, on the whole, rather than per line.
-  const tax = Math.round(gross / 11);
+
+  const solved = reconcileRebates(rebates, payable, printedTax);
+  if (!solved) return { ...empty, tax_on_gross: centsToMajor(printedTax) };
+  const { lines: reconciled, grossCents: gross } = solved;
+  const rebateSum = reconciled.reduce((sum, r) => sum + r.amount_cents, 0);
   return {
-    rebates_total: centsToMajor(rebates),
+    rebates_total: centsToMajor(rebateSum),
     gross_inc_tax: centsToMajor(gross),
-    tax_on_gross: centsToMajor(tax),
-    net_of_tax: centsToMajor(gross - tax),
-    tax_on_gross_formatted: formatMoney(centsToMajor(tax), currency),
+    tax_on_gross: centsToMajor(printedTax),
+    net_of_tax: centsToMajor(gross - printedTax),
+    tax_on_gross_formatted: formatMoney(centsToMajor(printedTax), currency),
+    rebate_lines_reconciled: reconciled,
+    rebates_reconciled: true,
   };
+}
+
+/** "$3,529.09" -> 352909 cents. Null when there is nothing to read. */
+export function moneyCents(text) {
+  if (text === null || text === undefined) return null;
+  const digits = String(text).replace(/[^0-9.-]/g, '');
+  if (!digits || digits === '-' || digits === '.') return null;
+  const value = Number(digits);
+  return Number.isFinite(value) ? Math.round(value * 100) : null;
 }
 
 function eventFrom(event) {

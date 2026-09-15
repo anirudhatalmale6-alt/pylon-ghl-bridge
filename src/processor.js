@@ -267,7 +267,8 @@ export class Processor {
         rebatesSummary: payload.contract.rebates_summary ?? '',
         totalTaxFormatted: payload.contract.total_tax_formatted ?? null,
         totalAmountFormatted: payload.contract.total_amount_formatted ?? null,
-        rebateLines: payload.contract.rebate_lines ?? [],
+        rebateLines: payload.contract.rebate_lines_reconciled ?? payload.contract.rebate_lines ?? [],
+        rebatesReconciled: payload.contract.rebates_reconciled === true,
         grossIncTax: payload.contract.gross_inc_tax ?? null,
         taxOnGross: payload.contract.tax_on_gross ?? null,
         netOfTax: payload.contract.net_of_tax ?? null,
@@ -618,16 +619,28 @@ export class Processor {
       return [];
     }
 
-    // Independent cross-check. Pylon prints its own GST on the contract; if our
-    // arithmetic disagrees with it, something has changed in how Pylon reports
-    // and the invoice must not go out on our figure alone.
-    const pylonTax = moneyFromFormatted(contract.total_tax_formatted);
-    if (pylonTax !== null && Math.abs(pylonTax - contract.tax_on_gross) > 0.01) {
+    /**
+     * The rebates must reconcile to the signed total before anything is billed.
+     *
+     * Pylon reports some incentives GST exclusive and some not — the STC lines
+     * are the figure actually deducted, while a PRC line is quoted ex GST and
+     * deducted GST inclusive. `invoiceBasis` solves for the combination that
+     * reproduces both the GST Pylon printed on the contract and the total the
+     * customer signed for. If it cannot, the numbers do not add up and no
+     * invoice goes out.
+     */
+    if (!contract.rebates_reconciled) {
       warnings.push(
-        `No invoice was raised: our GST (${contract.tax_on_gross}) disagrees with the figure on the Pylon contract (${pylonTax}). ` +
-          'Refusing to send a tax invoice on a number we cannot reconcile. Everything else landed.',
+        `No invoice was raised: the rebates on this job do not reconcile to the signed total. ` +
+          `Pylon reports GST of ${contract.total_tax_formatted ?? 'nothing'} and a total payable of ` +
+          `${contract.total_amount_formatted ?? contract.total_amount}, and no combination of the rebate lines ` +
+          'produces both. Refusing to send a tax invoice on figures that do not add up. Everything else landed.',
       );
-      logger.warn('GST cross-check failed', { ours: contract.tax_on_gross, pylon: pylonTax });
+      logger.warn('rebate reconciliation failed', {
+        project: payload.project.id,
+        printedTax: contract.total_tax_formatted,
+        payable: contract.total_amount,
+      });
       return [];
     }
 
@@ -655,7 +668,7 @@ export class Processor {
       },
       // One line per rebate. There is usually more than one: a job with a
       // battery carries a solar STC incentive AND a battery STC incentive.
-      ...(contract.rebate_lines ?? []).map((rebate) => ({
+      ...(contract.rebate_lines_reconciled ?? contract.rebate_lines ?? []).map((rebate) => ({
         name: `Less ${rebate.description}${rebate.quantity ? ` (${rebate.quantity} x)` : ''}`,
         amount: -rebate.amount,
         qty: 1,
