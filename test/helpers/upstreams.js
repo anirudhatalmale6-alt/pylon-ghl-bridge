@@ -219,6 +219,12 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
       // Live rule, undocumented: every instalment must fall before the
       // invoice's own due date, or the whole invoice is rejected.
       const schedules = body?.paymentSchedule?.schedules ?? [];
+      // Live rule: instalment dates must not go backwards. Duplicates are fine.
+      for (let i = 1; i < schedules.length; i += 1) {
+        if (schedules[i]?.dueDate < schedules[i - 1]?.dueDate) {
+          return json(res, 400, { status: 400, message: 'Error: Payment schedules should have due date in increasing order' });
+        }
+      }
       for (const sch of schedules) {
         // STRICTLY less than. The live API rejects an instalment that falls ON
         // the invoice due date, and a fake that allowed it let exactly that

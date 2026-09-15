@@ -635,12 +635,29 @@ export class Processor {
     ];
 
     const issueDate = toIsoDate(new Date().toISOString());
+    // GoHighLevel requires the instalment dates to be in increasing order:
+    // "Payment schedules should have due date in increasing order". Duplicates
+    // are allowed, going backwards is not.
+    //
+    // `dueDays` cannot be reused here. It means "days after THIS invoice is
+    // raised", and in the old three-invoice world the final one was raised at
+    // installation time with dueDays 0. On a single invoice raised at signing
+    // that puts the last payment FIRST, and the whole invoice is refused —
+    // which is exactly what happened to a real contract. `scheduleDays` is
+    // measured from signing instead.
+    let previous = null;
     const schedules = (section?.stages ?? [])
-      .map((stage) => ({
-        value: stagePercent(stage, section.stages),
-        dueDate: addDays(issueDate, stage.dueDays ?? this.config.ghl.invoiceDueDays),
-      }))
-      .filter((s) => Number.isFinite(s.value) && s.value > 0);
+      .map((stage) => ({ stage, value: stagePercent(stage, section.stages) }))
+      .filter((s) => Number.isFinite(s.value) && s.value > 0)
+      .map(({ stage, value }) => {
+        const days = stage.scheduleDays ?? stage.dueDays ?? this.config.ghl.invoiceDueDays;
+        let dueDate = addDays(issueDate, days);
+        // Never go backwards, whatever the configuration says. Percentages stay
+        // in stage order — sorting by date would bill the final 30% first.
+        if (previous && dueDate < previous) dueDate = previous;
+        previous = dueDate;
+        return { value, dueDate };
+      });
 
     const invoiceBody = {
       name: render(section?.invoiceName, payload) || contract.name || 'Energy system installation',

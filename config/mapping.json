@@ -60,7 +60,8 @@
             "trigger": "signed",
             "dueDays": 7,
             "name": "Deposit (10%) - {{project.reference_number || project.id}}",
-            "description": "10% deposit on signing.\n{{contract.name}}\n{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\n{{contract.rebates_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}"
+            "description": "10% deposit on signing.\n{{contract.name}}\n{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\n{{contract.rebates_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}",
+            "scheduleDays": 7
           },
           {
             "key": "pre_install",
@@ -69,7 +70,8 @@
             "trigger": "manual",
             "dueDays": 7,
             "name": "Pre-installation (60%) - {{project.reference_number || project.id}}",
-            "description": "60% payable prior to installation.\n{{contract.name}}\n{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\n{{contract.rebates_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}"
+            "description": "60% payable prior to installation.\n{{contract.name}}\n{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\n{{contract.rebates_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}",
+            "scheduleDays": 30
           },
           {
             "key": "installation",
@@ -78,7 +80,8 @@
             "dueDays": 0,
             "name": "Final payment - {{project.reference_number || project.id}}",
             "description": "Balance of the contract, payable on the day of installation.\n{{contract.name}}\n{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\n{{contract.rebates_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}",
-            "remainder": true
+            "remainder": true,
+            "scheduleDays": 60
           }
         ],
         "termsNotes": "<p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{project.reference_number || project.id}} when making payment</p>",

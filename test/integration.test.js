@@ -1580,3 +1580,20 @@ test('stage percentages survive the remainder stage', async () => {
   const other = [{ percent: 25 }, { remainder: true }];
   assert.deepEqual(other.map((s) => stagePercent(s, other)), [25, 75]);
 });
+
+test('instalment dates never go backwards, whatever the stage config says', async (t) => {
+  // A real contract was refused with "Payment schedules should have due date in
+  // increasing order" because the final stage is "payable on the day of
+  // installation" - dueDays 0 - which put the last payment first.
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const body = h.ghl.findAll('POST', '/invoices/')[0].body;
+  const dates = body.paymentSchedule.schedules.map((s) => s.dueDate);
+  assert.deepEqual(dates, [...dates].sort(), 'dates must be non-decreasing');
+  // And the percentages stay in stage order - sorting by date would bill the
+  // final 30% before the 10% deposit.
+  assert.deepEqual(body.paymentSchedule.schedules.map((s) => s.value), [10, 60, 30]);
+});
