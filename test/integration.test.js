@@ -1714,3 +1714,27 @@ test('the stage endpoint works from a raw GoHighLevel webhook body', async (t) =
   assert.equal(json.ok, true, JSON.stringify(json));
   assert.equal(h.ghl.findAll('POST', '/invoices/').length, 1);
 });
+
+test('health reports how invoicing is configured, without leaking the values', async (t) => {
+  const h = await harness({ config: ON_STAGE });
+  t.after(() => h.close());
+
+  const body = await fetch(`${h.bridge.base}/health`).then((r) => r.json());
+  assert.equal(body.invoicing.enabled, true);
+  assert.equal(body.invoicing.mode, 'one invoice per contract');
+  assert.equal(body.invoicing.raisedAt, 'when the opportunity reaches the configured pipeline stage');
+  assert.equal(body.invoicing.gst, 'GST 10% (exclusive)');
+
+  // The tax record id and the logo URL are configuration, not something to
+  // publish on an unauthenticated endpoint.
+  const raw = JSON.stringify(body);
+  assert.doesNotMatch(raw, /tax-rec-1/, 'the tax record id must not be exposed');
+});
+
+test('health says plainly when GST is not configured', async (t) => {
+  const h = await harness({ config: { ghl: { createInvoice: true, invoiceSingle: true } } });
+  t.after(() => h.close());
+  const body = await fetch(`${h.bridge.base}/health`).then((r) => r.json());
+  assert.match(body.invoicing.gst, /NOT CONFIGURED/);
+  assert.equal(body.invoicing.raisedAt, 'when the contract is signed');
+});

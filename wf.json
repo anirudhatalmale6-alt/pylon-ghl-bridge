@@ -1,0 +1,1 @@
+{"ok":false,"error":"That contract was signed before the invoice figures started being recorded, so there is nothing to build an invoice from. Replay the signature event and try again."}

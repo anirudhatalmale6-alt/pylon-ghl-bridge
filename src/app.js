@@ -155,6 +155,24 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
       dryRun: config.dryRun,
       mode: enrichmentEnabled(config) ? 'full' : 'webhook-only',
       warnings: [...configWarnings(config), ...(processor.mapping.warnings ?? [])],
+      /**
+       * How invoicing is configured right now. No secrets — just which way the
+       * switches are set, so "did my change take effect?" is a URL anyone can
+       * open rather than a question for me. Adding the running commit here paid
+       * for itself several times over; this is the same idea.
+       */
+      invoicing: {
+        enabled: config.ghl.createInvoice,
+        mode: config.ghl.invoiceSingle ? 'one invoice per contract' : 'one invoice per payment stage',
+        raisedAt: config.ghl.invoiceSingle && config.ghl.invoiceOnStage
+          ? 'when the opportunity reaches the configured pipeline stage'
+          : 'when the contract is signed',
+        gst: config.ghl.invoiceTaxId
+          ? `${config.ghl.invoiceTaxName} ${config.ghl.invoiceTaxRate}% (${config.ghl.invoiceTaxCalculation})`
+          : 'NOT CONFIGURED - no invoice will be raised',
+        sendAction: config.ghl.invoiceSendAction,
+        logo: config.ghl.invoiceLogoUrl ? 'configured' : 'from the GoHighLevel location only',
+      },
       events: store.stats(),
     };
 
