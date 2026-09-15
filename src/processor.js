@@ -263,6 +263,8 @@ export class Processor {
         addressFull: payload.client.address?.full ?? '',
         phoneE164: payload.client.phone_e164 ?? '',
         lineItemsSummary: payload.contract.line_items_summary ?? '',
+        lineItemsSummaryHtml: payload.contract.line_items_summary_html ?? '',
+        rebatesSummary: payload.contract.rebates_summary ?? '',
         totalTaxFormatted: payload.contract.total_tax_formatted ?? null,
         totalAmountFormatted: payload.contract.total_amount_formatted ?? null,
         rebateLines: payload.contract.rebate_lines ?? [],

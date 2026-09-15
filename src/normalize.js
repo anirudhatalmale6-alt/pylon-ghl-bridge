@@ -231,6 +231,19 @@ function contractFrom(design, { project, eventAttrs = {} } = {}) {
      * Rebates already deducted from the price, worded so nobody reads them as a
      * further discount. STCs are the usual one on an Australian solar job.
      */
+    /**
+     * The same equipment list, but with <br> between the lines.
+     *
+     * GoHighLevel renders an invoice's notes as HTML and a newline in it does
+     * nothing — the whole list came out as one run-on paragraph in a column a
+     * few words wide. The plain-text version is kept for anything that is not
+     * HTML.
+     */
+    line_items_summary_html: (a.line_items ?? [])
+      .filter((item) => !item.is_line_hidden && Number(item.quantity) > 0 && !(Number(item.total_amount) < 0))
+      .map((item) => `${item.quantity} x ${item.description ?? item.key ?? ''}`.trim())
+      .join('<br>'),
+
     rebates_summary: (a.line_items ?? [])
       .filter((item) => !item.is_line_hidden && Number(item.total_amount) < 0)
       .map((item) => {

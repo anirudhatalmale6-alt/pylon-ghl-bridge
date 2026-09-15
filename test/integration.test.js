@@ -1738,3 +1738,65 @@ test('health says plainly when GST is not configured', async (t) => {
   assert.match(body.invoicing.gst, /NOT CONFIGURED/);
   assert.equal(body.invoicing.raisedAt, 'when the contract is signed');
 });
+
+test('the invoice line is short and the detail goes in the full-width notes', async () => {
+  // Accounts said the invoice read "long and skinny": the item name carried the
+  // whole site address and the description the entire equipment list, all inside
+  // a column a few words wide. Rendered against a REAL job's values.
+  const { render } = await import('../src/mapping.js');
+  const fs = await import('node:fs');
+  const mapping = JSON.parse(fs.readFileSync(new URL('../config/mapping.json', import.meta.url), 'utf8'));
+  const inv = mapping.events['web_proposals.signed'].invoices;
+
+  const payload = {
+    project: { reference_number: '', id: 'SvhyvC8JLg' },
+    client: { address: { full: '180 Cummins Rd, Menangle, New South Wales, 2568' } },
+    contract: {
+      name: '6.3kW Solar system with home energy system',
+      line_items_summary_html: '12 x AIKO Solar Neostar 2P (525W)<br>1 x FoxESS KH10 (10kW)',
+      rebates_summary: '43 x STCs: $7,178.00 — already deducted from the price above',
+    },
+  };
+
+  const name = render(inv.systemLineName, payload);
+  const description = render(inv.systemLineDescription, payload);
+  const notes = render(inv.termsNotes, payload);
+
+  assert.equal(name, '6.3kW Solar system with home energy system');
+  assert.doesNotMatch(name, /Cummins|New South Wales|2568/, 'the address belongs out of the item name');
+  assert.ok(name.length < 60, `item name is ${name.length} chars`);
+  assert.ok(description.length < 80, 'the description is one line, not a spec sheet');
+
+  // The detail is still there, just where the page is full width.
+  assert.match(notes, /Site address:<\/strong> 180 Cummins Rd/);
+  assert.match(notes, /System quoted in Pylon/);
+  assert.match(notes, /AIKO Solar Neostar/);
+  assert.match(notes, /Account name/);
+});
+
+test('the equipment list is joined with <br>, not a newline', async () => {
+  // GoHighLevel renders the notes as HTML, so a newline does nothing - the whole
+  // list came out as one run-on paragraph. Needs two items to mean anything.
+  const { normalizeSignedEvent } = await import('../src/normalize.js');
+  const design = {
+    id: 'd1',
+    attributes: {
+      pricing: { total: 1000000, currency: 'AUD' },
+      proposal_quote: {},
+      summary: {},
+      line_items: [
+        { description: 'AIKO Solar Neostar 2P (525W)', quantity: 12, total_amount: 600000 },
+        { description: 'FoxESS KH10 (10kW)', quantity: 1, total_amount: 300000 },
+        { description: 'FoxESS CQ7-50-L4', quantity: 1, total_amount: 100000 },
+      ],
+    },
+  };
+  const payload = normalizeSignedEvent({ event: { attributes: {} }, project: { id: 'p1', attributes: {} }, design });
+  const html = payload.contract.line_items_summary_html;
+  const plain = payload.contract.line_items_summary;
+
+  assert.equal((html.match(/<br>/g) ?? []).length, 2, 'three items need two breaks');
+  assert.doesNotMatch(html, /\n/, 'a newline renders as nothing in GoHighLevel');
+  assert.match(plain, /\n/, 'the plain-text version keeps real newlines for anything not HTML');
+  assert.match(html, /12 x AIKO Solar Neostar 2P \(525W\)<br>1 x FoxESS KH10/);
+});

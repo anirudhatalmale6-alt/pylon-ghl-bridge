@@ -306,6 +306,8 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
         total_amount_formatted: basis.totalAmountFormatted ?? null,
         total_tax_formatted: basis.totalTaxFormatted ?? null,
         line_items_summary: basis.lineItemsSummary ?? '',
+        line_items_summary_html: basis.lineItemsSummaryHtml ?? '',
+        rebates_summary: basis.rebatesSummary ?? '',
         rebate_lines: basis.rebateLines ?? [],
         gross_inc_tax: basis.grossIncTax ?? null,
         tax_on_gross: basis.taxOnGross ?? null,

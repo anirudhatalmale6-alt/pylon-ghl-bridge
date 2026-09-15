@@ -84,12 +84,12 @@
             "scheduleDays": 60
           }
         ],
-        "termsNotes": "<p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{project.reference_number || project.id}} when making payment</p>",
+        "termsNotes": "<p><strong>Site address:</strong> {{client.address.full}}</p><p><strong>System quoted in Pylon</strong><br>{{contract.line_items_summary_html}}</p><p>{{contract.rebates_summary}}</p><p><strong>Pylon reference:</strong> {{project.reference_number || project.id}}</p><p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{project.reference_number || project.id}} when making payment</p>",
         "businessName": "{{env.BUSINESS_NAME}}",
         "businessAbn": "{{env.BUSINESS_ABN}}",
         "invoiceName": "{{contract.name}} - {{project.reference_number || project.id}}",
-        "systemLineName": "{{contract.name}} - {{client.address.full}}",
-        "systemLineDescription": "{{contract.description}}\nSite address: {{client.address.full}}\n\nSystem quoted in Pylon:\n{{contract.line_items_summary}}\n\nFull contract value: {{contract.total_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}"
+        "systemLineName": "{{contract.name}}",
+        "systemLineDescription": "{{client.address.full}}"
       },
       "note": "Contract signed in Pylon on {{contract.signed_at | date}}.\nSigned by: {{contract.signer_name}} ({{contract.signer_email}})\nSystem: {{contract.description || contract.title}}\nContract value: {{contract.total_amount_formatted}}\nDeposit: {{contract.deposit_amount_formatted}}\nPylon reference: {{project.reference_number || project.id}}\nSigned contract: {{contract.signed_pdf_stored_url}}\nPylon project: {{project.in_app_url}}"
     },
