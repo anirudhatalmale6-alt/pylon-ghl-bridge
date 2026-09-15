@@ -1419,3 +1419,34 @@ test('a deliberate blank line is spacing and survives; a valueless line does not
     'the valueless line goes, the spacing around it does not collapse the document',
   );
 });
+
+test('the invoice carries a logo even though the GHL location has none', async (t) => {
+  // Their real location record has logoUrl: "" — that is exactly why invoices
+  // came out unbranded. The configured logo is a FALLBACK, not an override.
+  const LOGO = 'https://assets.cdn.filesafe.space/loc/media/logo.png';
+  const h = await harness({ config: { ghl: { createInvoice: true, invoiceLogoUrl: LOGO } } });
+  t.after(() => h.close());
+
+  const details = await h.bridge.processor.invoiceBusinessDetails();
+  assert.equal(details.logoUrl, LOGO, 'an empty location logo must fall through to the configured one');
+  assert.equal(details.name, 'Test Solar Co', 'and the rest of the business details still come from the location');
+});
+
+test('a logo set in GoHighLevel wins over the configured fallback', async (t) => {
+  const h = await harness({
+    ghl: { locationLogoUrl: 'https://example.test/their-own.png' },
+    config: { ghl: { createInvoice: true, invoiceLogoUrl: 'https://example.test/fallback.png' } },
+  });
+  t.after(() => h.close());
+
+  const details = await h.bridge.processor.invoiceBusinessDetails();
+  assert.equal(details.logoUrl, 'https://example.test/their-own.png',
+    'whatever they set in GoHighLevel must win over ours');
+});
+
+test('with no logo configured anywhere, none is sent rather than an empty string', async (t) => {
+  const h = await harness({ config: { ghl: { createInvoice: true } } });
+  t.after(() => h.close());
+  const details = await h.bridge.processor.invoiceBusinessDetails();
+  assert.equal(details.logoUrl, undefined);
+});

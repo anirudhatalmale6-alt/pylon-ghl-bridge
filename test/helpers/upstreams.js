@@ -113,7 +113,7 @@ export const GHL_FIELDS = [
  * Stand-in for services.leadconnectorhq.com. Records every request body so the
  * tests can assert exactly what would have been written to the real CRM.
  */
-export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false, invoiceScope = true, duplicatePhone = null } = {}) {
+export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FIELDS, failUpload = false, invoiceScope = true, duplicatePhone = null, locationLogoUrl = '' } = {}) {
   const calls = [];
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -182,7 +182,8 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
           postalCode: '2300',
           phone: '+61200000000',
           website: 'https://example.com',
-          logoUrl: '',
+          // Their real location has this empty, which is why invoices were unbranded.
+          logoUrl: locationLogoUrl,
         },
       });
     }

@@ -71,6 +71,12 @@ services:
       # --- Invoicing ------------------------------------------------------
       - key: GHL_CREATE_INVOICE
         value: "true"
+      # Logo at the top of an invoice. Used only when the GoHighLevel location
+      # has no logo of its own - theirs is empty, which is why invoices were
+      # coming out unbranded. Points at their media library.
+      - key: GHL_INVOICE_LOGO_URL
+        sync: false
+
       - key: GHL_INVOICE_SEND_ACTION
         value: none
       - key: GHL_INVOICE_DUE_DAYS

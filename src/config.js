@@ -141,6 +141,11 @@ export const config = {
     // block is sent at all. A business taking bank transfers has no Stripe
     // account, and `false` is a preference where "unset" is the honest value.
     invoiceBankDebitOnly: optionalBool(process.env.GHL_INVOICE_BANK_DEBIT_ONLY),
+    // Logo for the top of an invoice. The location's own logo wins when it has
+    // one; this is the fallback, because GoHighLevel's location record here has
+    // logoUrl empty and that is why invoices came out unbranded. Must be a
+    // publicly reachable URL — the media library gives one.
+    invoiceLogoUrl: process.env.GHL_INVOICE_LOGO_URL || '',
   },
 
   // Optional outbound "did it land?" callback. Every processed event POSTs a

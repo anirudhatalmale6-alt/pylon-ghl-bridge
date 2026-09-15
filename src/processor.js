@@ -549,12 +549,16 @@ export class Processor {
         },
         phoneNo: location?.phone ?? '',
         website: location?.website ?? '',
-        logoUrl: location?.logoUrl || undefined,
+        // The location's own logo first, so anything they set in GoHighLevel
+        // wins; the configured one is only a fallback.
+        logoUrl: location?.logoUrl || this.config.ghl.invoiceLogoUrl || undefined,
       };
     } catch (error) {
       // Not fatal — GHL fills its own defaults if businessDetails is thin.
+      // The logo is still worth sending: an unreadable location should not be
+      // the reason a customer gets an unbranded invoice.
       logger.warn('could not read the location for invoice business details', { error });
-      return {};
+      return this.config.ghl.invoiceLogoUrl ? { logoUrl: this.config.ghl.invoiceLogoUrl } : {};
     }
   }
 
