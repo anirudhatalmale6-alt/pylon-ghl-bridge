@@ -1478,6 +1478,15 @@ test('a signed contract raises ONE invoice: GST on the full price, rebates untax
 
   const calls = h.ghl.findAll('POST', '/invoices/');
   assert.equal(calls.length, 1, 'one invoice for the job, not one per payment stage');
+
+  // It must actually have been CREATED, not merely attempted. A rejected
+  // invoice only becomes a warning, so asserting the POST happened proves
+  // nothing - that is precisely how a real signed contract reached production
+  // with no invoice on it.
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.deepEqual(record.result.warnings ?? [], [], 'GoHighLevel must not have rejected it');
+  assert.equal(record.result.invoices.length, 1, 'and it is recorded against the project');
+
   const body = calls[0].body;
 
   // The system line carries the tax; every rebate line carries none.
@@ -1498,8 +1507,13 @@ test('a signed contract raises ONE invoice: GST on the full price, rebates untax
   // The instalments.
   assert.deepEqual(body.paymentSchedule.schedules.map((s) => s.value), [10, 60, 30]);
   assert.equal(body.paymentSchedule.type, 'percentage');
-  // The invoice due date must not precede the last instalment.
-  assert.ok(body.dueDate >= body.paymentSchedule.schedules.at(-1).dueDate);
+  // STRICTLY after the last instalment. GoHighLevel rejects the whole invoice
+  // when an instalment falls ON the due date.
+  assert.ok(body.dueDate > body.paymentSchedule.schedules.at(-1).dueDate,
+    `invoice dueDate ${body.dueDate} must be after the last instalment ${body.paymentSchedule.schedules.at(-1).dueDate}`);
+  for (const sch of body.paymentSchedule.schedules) {
+    assert.ok(sch.dueDate < body.dueDate, `instalment ${sch.dueDate} must fall before the invoice due date`);
+  }
 });
 
 test('the invoice total comes back equal to the contract', async (t) => {

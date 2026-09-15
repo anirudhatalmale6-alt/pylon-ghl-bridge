@@ -655,9 +655,17 @@ export class Processor {
       items,
       discount: { type: 'percentage', value: 0 },
       issueDate,
-      // Must be on or after the last instalment, or GoHighLevel rejects the
-      // whole invoice with "Payment schedule be less than invoice due date".
-      dueDate: schedules.length ? schedules.at(-1).dueDate : addDays(issueDate, this.config.ghl.invoiceDueDays),
+      // Must be STRICTLY AFTER every instalment, and after the LATEST of them
+      // rather than the last one listed. Two things bite here:
+      //   - equal is not good enough. GoHighLevel rejected a real signed
+      //     contract with "Payment schedule be less than invoice due date" when
+      //     the invoice date matched an instalment, losing the whole invoice.
+      //   - the final stage is "payable on the day of installation", dueDays 0,
+      //     so it is the EARLIEST date, not the latest. Taking the last entry
+      //     in the list put the due date a week before two of the instalments.
+      dueDate: schedules.length
+        ? addDays(schedules.map((s) => s.dueDate).sort().at(-1), 1)
+        : addDays(issueDate, this.config.ghl.invoiceDueDays),
       liveMode: this.config.ghl.invoiceLiveMode,
       sentTo: { email: payload.client.email ? [payload.client.email] : [] },
     };

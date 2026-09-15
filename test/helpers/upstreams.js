@@ -220,7 +220,10 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
       // invoice's own due date, or the whole invoice is rejected.
       const schedules = body?.paymentSchedule?.schedules ?? [];
       for (const sch of schedules) {
-        if (body?.dueDate && sch?.dueDate && sch.dueDate > body.dueDate) {
+        // STRICTLY less than. The live API rejects an instalment that falls ON
+        // the invoice due date, and a fake that allowed it let exactly that
+        // reach a real customer's contract.
+        if (body?.dueDate && sch?.dueDate && sch.dueDate >= body.dueDate) {
           return json(res, 400, { status: 400, message: 'Error: Payment schedule be less than invoice due date' });
         }
       }
