@@ -95,8 +95,16 @@ export class Tracker {
       total: jobs.length,
       readable: live.length,
       unreadable: jobs.length - live.length,
+      /**
+       * Split on whether FORMBAY has a sold date, and named for exactly that.
+       *
+       * It is not the same as the business's own record: 180 jobs their sheet
+       * marks sold come back from Formbay as "approved" with no sold date. So
+       * calling the other bucket "not sold" would contradict their books and
+       * send someone chasing a sale that already happened.
+       */
       sold: { count: sold.length, value: sum(sold) },
-      awaitingSale: { count: unsold.length, value: sum(unsold) },
+      noSoldDate: { count: unsold.length, value: sum(unsold) },
       totalValue: sum(live),
     };
   }
@@ -161,7 +169,12 @@ export function renderPage({ summary, jobs, token }) {
   const rows = jobs
     .map((j) => {
       const state = !j.ok ? 'error' : j.soldDate ? 'sold' : 'pending';
-      const label = !j.ok ? (j.error ?? 'could not read') : j.soldDate ? `sold ${esc(j.soldDate)}` : esc(j.status ?? 'not sold');
+      // Never invent "not sold": show whatever status Formbay holds.
+      const label = !j.ok
+        ? (j.error ?? 'could not read')
+        : j.soldDate
+          ? `sold ${esc(j.soldDate)}`
+          : esc(j.status ?? 'no status');
       return `<tr class="${state}">
         <td class="mono">${esc(j.reference)}</td>
         <td>${esc(j.address)}</td>
@@ -204,15 +217,16 @@ form{display:inline}button{background:var(--navy);color:#fff;border:0;border-rad
 <div class="cards">
   <div class="card"><b>${summary.total}</b><span>jobs tracked</span></div>
   <div class="card"><b>${money(summary.totalValue)}</b><span>total certificate value</span></div>
-  <div class="card"><b>${money(summary.awaitingSale.value)}</b><span>${summary.awaitingSale.count} not sold yet</span></div>
-  <div class="card"><b>${money(summary.sold.value)}</b><span>${summary.sold.count} sold</span></div>
+  <div class="card"><b>${money(summary.noSoldDate.value)}</b><span>${summary.noSoldDate.count} with no sold date in Formbay</span></div>
+  <div class="card"><b>${money(summary.sold.value)}</b><span>${summary.sold.count} with a sold date in Formbay</span></div>
   ${summary.unreadable ? `<div class="card"><b style="color:var(--bad)">${summary.unreadable}</b><span>could not be read</span></div>` : ''}
 </div>
 <div class="tablewrap"><table>
 <tr><th>Formbay #</th><th>Site</th><th>Certs</th><th>Price</th><th>Value</th><th>Job #</th><th>Status</th></tr>
 ${rows || '<tr><td colspan="7">Nothing tracked yet.</td></tr>'}
 </table></div>
-<p class="note">Value is the certificate count times the price Formbay holds &mdash; Formbay does not publish a total, so it is worked out here.
+<p class="note"><strong>"No sold date" is Formbay's field, not your records.</strong> Many jobs your spreadsheet marks as sold come back from Formbay as "approved" with that field empty, so treat this as what Formbay knows rather than what has actually been sold.<br>
+Value is the certificate count times the price Formbay holds &mdash; Formbay does not publish a total, so it is worked out here.
 Anything it refuses to return is shown in red rather than left out, so a job cannot go missing quietly.</p>
 <form method="post" action="/tracker/refresh?token=${encodeURIComponent(token ?? '')}">
   <button type="submit">Refresh from Formbay</button></form>

@@ -1942,8 +1942,8 @@ test('the tracker totals sold and unsold separately, and surfaces failures', asy
   assert.equal(s.total, 3);
   assert.equal(s.sold.count, 1);
   assert.equal(s.sold.value, 1000);
-  assert.equal(s.awaitingSale.count, 1);
-  assert.equal(s.awaitingSale.value, 250);
+  assert.equal(s.noSoldDate.count, 1);
+  assert.equal(s.noSoldDate.value, 250);
   assert.equal(s.unreadable, 1, 'a job Formbay refuses is counted, not hidden');
   assert.equal(s.totalValue, 1250, 'an unreadable job contributes nothing rather than zero-by-accident');
 });
@@ -1952,7 +1952,7 @@ test('the tracker page escapes whatever Formbay returns', async () => {
   const { renderPage } = await import('../src/tracker.js');
   const html = renderPage({
     summary: { refreshedAt: null, total: 1, readable: 1, unreadable: 0,
-      sold: { count: 0, value: 0 }, awaitingSale: { count: 1, value: 0 }, totalValue: 0 },
+      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 0 }, totalValue: 0 },
     jobs: [{ reference: 'BSTC1', ok: true, address: '<script>alert(1)</script>', certificates: 1 }],
     token: 't',
   });
@@ -2027,4 +2027,30 @@ test('two invoices never share a number', async (t) => {
 
   const numbers = h.ghl.findAll('POST', '/invoices/').map((c) => c.body.invoiceNumber);
   assert.equal(new Set(numbers).size, numbers.length, `numbers must be unique, got ${numbers.join(', ')}`);
+});
+
+test('a unix sold_date is shown as a date, not a number', async () => {
+  const { formbayDate } = await import('../src/formbay-api.js');
+  // Formbay returns idate as "11/06/2026" but sold_date as a unix timestamp.
+  // Printed raw, the page said "sold 1751928929".
+  assert.equal(formbayDate(1751928929), '07/07/2025');
+  assert.equal(formbayDate('1757040932'), '05/09/2025');
+  assert.equal(formbayDate('11/06/2026'), '11/06/2026', 'a real date is left alone');
+  assert.equal(formbayDate(null), null);
+  assert.equal(formbayDate(''), null);
+});
+
+test('a job with no sold date is never labelled "not sold"', async () => {
+  const { renderPage } = await import('../src/tracker.js');
+  // 180 jobs their sheet marks sold come back from Formbay as "approved" with
+  // no sold date. Calling those "not sold" would contradict their own books.
+  const html = renderPage({
+    summary: { refreshedAt: null, total: 1, readable: 1, unreadable: 0,
+      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 3809.72 }, totalValue: 3809.72 },
+    jobs: [{ reference: 'BSTC1', ok: true, status: 'approved', soldDate: null, value: 3809.72 }],
+    token: 't',
+  });
+  assert.doesNotMatch(html, />not sold</, 'the page must not assert a sale has not happened');
+  assert.match(html, />approved</, "Formbay's own status is shown instead");
+  assert.match(html, /no sold date in Formbay/, 'and the heading says whose field it is');
 });

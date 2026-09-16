@@ -130,7 +130,7 @@ export function summarise(data = {}, parsed = {}) {
     formId: parsed.id ?? null,
     jobNumber: data.urref || null, // the "Ref Id" printed on a Formbay payment advice
     status: data.status || null,
-    soldDate: data.sold_date || null,
+    soldDate: formbayDate(data.sold_date),
     installedDate: data.idate || null,
     certificates,
     price,
@@ -156,6 +156,22 @@ function titleCase(text) {
     .toLowerCase()
     .replace(/\b[a-z]/g, (c) => c.toUpperCase())
     .trim();
+}
+
+/**
+ * Formbay's dates come in two shapes: `idate` is "11/06/2026" but `sold_date`
+ * is a unix timestamp in seconds. Printing the raw number put "sold 1751928929"
+ * on the page.
+ */
+export function formbayDate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim();
+  if (/^\d{9,11}$/.test(text)) {
+    const d = new Date(Number(text) * 1000);
+    if (Number.isNaN(d.getTime())) return null;
+    return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
+  }
+  return text;
 }
 
 function toNumber(value) {
