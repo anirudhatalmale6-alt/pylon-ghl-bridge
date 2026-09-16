@@ -74,6 +74,17 @@ export const config = {
     // endpoint and the open internet. Empty means the route refuses everything.
     webhookToken: process.env.FORMBAY_WEBHOOK_TOKEN || '',
     webhookHeader: process.env.FORMBAY_WEBHOOK_HEADER || 'x-formbay-token',
+
+    // Reading jobs back OUT of Formbay, for the STC tracker.
+    //
+    // The "API key" on Formbay's Account Settings screen is not an API key: it
+    // is the HTTP Basic credential for an OAuth2 password grant, so a username
+    // and password are needed as well. Give the integration its own Formbay
+    // login rather than a person's, so it survives a password change.
+    clientCredential: process.env.FORMBAY_CLIENT_CREDENTIAL || '',
+    username: process.env.FORMBAY_USERNAME || '',
+    password: process.env.FORMBAY_PASSWORD || '',
+    timeoutMs: int(process.env.FORMBAY_TIMEOUT_MS, 20000),
   },
 
   pylon: {

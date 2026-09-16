@@ -1870,3 +1870,92 @@ test('the invoice is refused when the rebates do not reconcile', async (t) => {
   assert.match(warnings.join(' '), /do not reconcile to the signed total/);
   assert.equal(h.ghl.findAll('POST', '/invoices/').length, 0, 'nothing may be billed');
 });
+
+// --- STC tracker -----------------------------------------------------------
+
+test('references are read out of the spreadsheet, and oddities are reported not dropped', async () => {
+  const { referencesFromCsv } = await import('../src/tracker.js');
+  const csv = [
+    'ADDRESS,JOB #,FORMBAY #,VALUE',
+    '"1 Test St, Somewhere",4432,BSTC139157,100',
+    '2 Other Rd,4433,PV1108339,200',
+    '3 Third Ave,4434,Greendeal,300',      // not a Formbay number
+    '4 Fourth St,4435,BSTC139157,400',      // duplicate
+    '5 Fifth St,4436,,500',                 // blank
+  ].join('\n');
+  const { references, skipped } = referencesFromCsv(csv);
+  assert.deepEqual(references, ['BSTC139157', 'PV1108339'], 'deduplicated');
+  assert.deepEqual(skipped, ['GREENDEAL'], 'anything unrecognised is reported, so a job cannot vanish quietly');
+});
+
+test('a quoted comma in an address does not shift the columns', async () => {
+  const { splitCsvLine } = await import('../src/tracker.js');
+  assert.deepEqual(splitCsvLine('"1 Test St, Somewhere",4432,BSTC1'), ['1 Test St, Somewhere', '4432', 'BSTC1']);
+});
+
+test('a Formbay reference maps to the right endpoint', async () => {
+  const { parseReference } = await import('../src/formbay-api.js');
+  assert.deepEqual(parseReference('BSTC238207'), { kind: 'bstc', id: '238207' });
+  assert.deepEqual(parseReference('pv1272458'), { kind: 'pv', id: '1272458' });
+  assert.deepEqual(parseReference('BSTC 238207'), { kind: 'bstc', id: '238207' });
+  // These exist in their sheet and must not be guessed at.
+  assert.equal(parseReference('Greendeal'), null);
+  assert.equal(parseReference('GWT834273'), null);
+  assert.equal(parseReference(''), null);
+});
+
+test('Formbay gives a count and a price, not a value', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // Real shape: calbstc is a STRING, and there is no total anywhere.
+  const s = summarise(
+    { calbstc: '101', price: 37.72, status: 'approved', sold_date: null, urref: '4813', idate: '11/06/2026',
+      pstreetnum: '17', pstreetname: 'STOWE', pstreettype: 'AV', pcity: 'CAMPBELLTOWN', pstate: 'nsw', ppostcode: '2560' },
+    { kind: 'bstc', id: '238207' },
+  );
+  assert.equal(s.certificates, 101);
+  assert.equal(s.value, 3809.72, '101 x $37.72, matching the Formbay payment advice');
+  assert.equal(s.jobNumber, '4813');
+  assert.equal(s.address, '17 Stowe Av, Campbelltown NSW 2560');
+  // A job with no price must not report a value of zero, which would read as free.
+  assert.equal(summarise({ calbstc: '10' }, {}).value, null);
+});
+
+test('the tracker totals sold and unsold separately, and surfaces failures', async (t) => {
+  const { Tracker } = await import('../src/tracker.js');
+  const os = await import('node:os');
+  const fsm = await import('node:fs');
+  const dir = fsm.mkdtempSync(`${os.tmpdir()}/tracker-test-`);
+  t.after(() => fsm.rmSync(dir, { recursive: true, force: true }));
+
+  const answers = {
+    BSTC1: { ok: true, value: 1000, soldDate: '01/09/2026' },
+    BSTC2: { ok: true, value: 250, soldDate: null },
+    PV3: { ok: false, error: 'Formbay says no access to this job.' },
+  };
+  const tracker = new Tracker({ dataDir: dir, client: { job: async (r) => ({ reference: r, ...answers[r] }) } });
+
+  tracker.add(['BSTC1', 'BSTC2', 'PV3', 'BSTC1']);
+  assert.equal(tracker.references().length, 3, 'the repeat is not added twice');
+
+  await tracker.refresh({ pauseMs: 0 });
+  const s = tracker.summary();
+  assert.equal(s.total, 3);
+  assert.equal(s.sold.count, 1);
+  assert.equal(s.sold.value, 1000);
+  assert.equal(s.awaitingSale.count, 1);
+  assert.equal(s.awaitingSale.value, 250);
+  assert.equal(s.unreadable, 1, 'a job Formbay refuses is counted, not hidden');
+  assert.equal(s.totalValue, 1250, 'an unreadable job contributes nothing rather than zero-by-accident');
+});
+
+test('the tracker page escapes whatever Formbay returns', async () => {
+  const { renderPage } = await import('../src/tracker.js');
+  const html = renderPage({
+    summary: { refreshedAt: null, total: 1, readable: 1, unreadable: 0,
+      sold: { count: 0, value: 0 }, awaitingSale: { count: 1, value: 0 }, totalValue: 0 },
+    jobs: [{ reference: 'BSTC1', ok: true, address: '<script>alert(1)</script>', certificates: 1 }],
+    token: 't',
+  });
+  assert.doesNotMatch(html, /<script>alert/, 'an address is data, not markup');
+  assert.match(html, /&lt;script&gt;/);
+});

@@ -130,3 +130,13 @@ services:
       # option (?token=...) also works and needs no header.
       - key: FORMBAY_WEBHOOK_HEADER
         value: x-formbay-token
+
+      # Reading jobs back OUT of Formbay for the STC tracker. The "API key" on
+      # Formbay's Account Settings screen is the HTTP Basic credential for an
+      # OAuth2 password grant, so a login is needed as well.
+      - key: FORMBAY_CLIENT_CREDENTIAL
+        sync: false
+      - key: FORMBAY_USERNAME
+        sync: false
+      - key: FORMBAY_PASSWORD
+        sync: false

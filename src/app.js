@@ -10,6 +10,8 @@ import { Processor, SIGNED_EVENT, CONTRACT_INVOICE_KEY } from './processor.js';
 import { createNotifier, buildSummary } from './callback.js';
 import { loadMapping } from './mapping.js';
 import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
+import { FormbayClient } from './formbay-api.js';
+import { Tracker, renderPage, referencesFromCsv } from './tracker.js';
 
 /**
  * Wires everything together and returns { app, store, queue, processor } so the
@@ -33,6 +35,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const processor = new Processor({ config, pylon, ghl, mapping, store });
   const notify = createNotifier(config.callback);
   const formbayLog = new FormbayLog({ dataDir: config.dataDir });
+  const tracker = new Tracker({ dataDir: config.dataDir, client: new FormbayClient(config.formbay) });
 
   for (const warning of configWarnings(config)) logger.warn(warning);
   for (const warning of mapping.warnings ?? []) logger.warn(warning);
@@ -142,6 +145,49 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   app.get('/formbay/events', requireAdmin(config), (req, res) => {
     const limit = Math.min(Number.parseInt(req.query.limit, 10) || 50, 500);
     res.json({ ok: true, ...formbayLog.stats(), events: formbayLog.list({ limit }) });
+  });
+
+  // ------------------------------------------------------------- tracker
+
+  /**
+   * The STC tracker as a page.
+   *
+   * Authenticated by the admin token in the query string rather than a header,
+   * because the point of it is a link the client can open and bookmark. That is
+   * a deliberate trade: the token ends up in browser history, so it is the same
+   * token that already guards the read-only endpoints, not a customer's data.
+   */
+  app.get('/tracker', (req, res) => {
+    if (!isAuthorised(req, config)) {
+      return res.status(401).type('html').send('<p>Add ?token=… to this address to see the tracker.</p>');
+    }
+    const { jobs } = tracker.read();
+    res.type('html').send(renderPage({ summary: tracker.summary(), jobs, token: req.query.token ?? '' }));
+  });
+
+  app.get('/tracker/summary', requireAdmin(config), (req, res) => res.json({ ok: true, ...tracker.summary() }));
+
+  app.post('/tracker/refresh', requireAdmin(config), async (req, res) => {
+    const limit = Number.parseInt(req.query.limit, 10) || null;
+    try {
+      const result = await tracker.refresh({ limit });
+      // A browser posting the form wants the page back, not JSON.
+      if ((req.headers.accept ?? '').includes('text/html')) {
+        return res.redirect(`/tracker?token=${encodeURIComponent(req.query.token ?? '')}`);
+      }
+      return res.json({ ok: true, ...result });
+    } catch (error) {
+      logger.error('tracker refresh failed', { error });
+      return res.status(502).json({ ok: false, error: error.message });
+    }
+  });
+
+  /** Seeds the job list from the spreadsheet, since Formbay will not list jobs. */
+  app.post('/tracker/seed', requireAdmin(config), express.text({ type: '*/*', limit: '4mb' }), (req, res) => {
+    const { references, skipped, error } = referencesFromCsv(req.body ?? '');
+    if (error) return res.status(400).json({ ok: false, error });
+    const added = tracker.add(references);
+    return res.json({ ok: true, ...added, skipped });
   });
 
   // -------------------------------------------------------------- health
@@ -457,7 +503,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     res.status(500).json({ ok: false, error: payload.message, detail: payload });
   });
 
-  return { app, store, queue, processor, pylon, ghl, config, notify };
+  return { app, store, queue, processor, pylon, ghl, config, notify, tracker };
 }
 
 function describe(mappingFields = {}, index, model) {
