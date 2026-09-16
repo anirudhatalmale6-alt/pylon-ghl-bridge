@@ -84,7 +84,7 @@
             "scheduleDays": 60
           }
         ],
-        "termsNotes": "<p><strong>Site address:</strong> {{client.address.full}}</p><p><strong>System quoted in Pylon</strong><br>{{contract.line_items_summary_html}}</p><p>{{contract.rebates_summary}}</p><p><strong>Pylon reference:</strong> {{project.reference_number || project.id}}</p><p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{project.reference_number || project.id}} when making payment</p>",
+        "termsNotes": "<p><strong>Site address:</strong> {{client.address.full}}</p><p><strong>System quoted in Pylon</strong><br>{{contract.line_items_summary_html}}</p><p>{{contract.rebates_summary}}</p><p><strong>Pylon reference:</strong> {{project.reference_number || project.id}}</p><p>Payment by bank transfer.</p><p><strong>Account name:</strong> {{env.BANK_NAME}}<br><strong>BSB:</strong> {{env.BANK_BSB}}<br><strong>Account number:</strong> {{env.BANK_ACCOUNT}}<br><strong>Please quote reference:</strong> {{invoice.number}} when making payment</p>",
         "businessName": "{{env.BUSINESS_NAME}}",
         "businessAbn": "{{env.BUSINESS_ABN}}",
         "invoiceName": "{{contract.name}} - {{project.reference_number || project.id}}",

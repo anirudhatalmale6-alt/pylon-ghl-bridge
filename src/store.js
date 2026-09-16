@@ -33,6 +33,7 @@ export class EventStore {
       const parsed = JSON.parse(fs.readFileSync(this.stateFile, 'utf8'));
       for (const record of parsed.records ?? []) this.state.set(record.id, record);
       for (const [key, value] of Object.entries(parsed.links ?? {})) this.links.set(key, value);
+      if (Number.isFinite(Number(parsed.lastInvoiceNumber))) this.lastInvoiceNumber = Number(parsed.lastInvoiceNumber);
       logger.info('event state restored', { records: this.state.size, links: this.links.size });
     } catch (error) {
       logger.error('could not read state file, starting empty', { error, file: this.stateFile });
@@ -64,6 +65,31 @@ export class EventStore {
     link.updatedAt = new Date().toISOString();
     this.links.set(pylonProjectId, link);
     this._persist();
+  }
+
+  /**
+   * The next invoice number, WITHOUT consuming it.
+   *
+   * Split into a peek and a commit because the number has to go into the
+   * request body, so it is chosen before anyone knows whether GoHighLevel will
+   * accept the invoice. Committing only on success means a rejected invoice
+   * does not burn a number and leave a hole in the sequence — and, far more
+   * importantly, two invoices can never share one.
+   */
+  peekInvoiceNumber(start) {
+    const last = Number.isFinite(Number(this.lastInvoiceNumber)) ? Number(this.lastInvoiceNumber) : null;
+    return last === null ? Number(start) : last + 1;
+  }
+
+  commitInvoiceNumber(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    // Never go backwards. A replay of an old event must not rewind the sequence
+    // and hand a number out for the second time.
+    if (this.lastInvoiceNumber === undefined || this.lastInvoiceNumber === null || n > this.lastInvoiceNumber) {
+      this.lastInvoiceNumber = n;
+      this._persist();
+    }
   }
 
   /** Finds the project link for a GoHighLevel contact or opportunity id. */
@@ -98,7 +124,14 @@ export class EventStore {
     // The links map is deliberately NOT aged out with the events: a deposit can
     // land months after the contract is signed and still needs to find its way
     // to the right opportunity.
-    fs.writeFileSync(tmp, JSON.stringify({ records: kept, links: Object.fromEntries(this.links) }, null, 2));
+    fs.writeFileSync(
+      tmp,
+      JSON.stringify(
+        { records: kept, links: Object.fromEntries(this.links), lastInvoiceNumber: this.lastInvoiceNumber ?? null },
+        null,
+        2,
+      ),
+    );
     fs.renameSync(tmp, this.stateFile);
   }
 

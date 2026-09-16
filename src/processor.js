@@ -644,6 +644,21 @@ export class Processor {
       return [];
     }
 
+    /**
+     * The invoice number, chosen here so it can appear in the payment terms.
+     *
+     * The customer is asked to quote it when they pay, so it has to be in the
+     * body we send rather than read back afterwards. Peeked now and committed
+     * only if GoHighLevel accepts the invoice, so a rejection does not burn a
+     * number.
+     */
+    const numberValue = this.store?.peekInvoiceNumber(this.config.ghl.invoiceNumberStart)
+      ?? this.config.ghl.invoiceNumberStart;
+    const invoiceNumber = String(numberValue).padStart(this.config.ghl.invoiceNumberPad, '0');
+    const invoiceReference = `${this.config.ghl.invoiceNumberPrefix}${invoiceNumber}`;
+    // Templates address it as {{invoice.number}} / {{invoice.reference}}.
+    const templateSource = { ...payload, invoice: { number: invoiceReference, sequence: numberValue } };
+
     const currency = render(section?.currency, payload) || contract.currency || 'AUD';
     const business = await this.invoiceBusinessDetails();
     const businessName = render(section?.businessName, payload);
@@ -659,8 +674,8 @@ export class Processor {
 
     const items = [
       {
-        name: render(section?.systemLineName, payload) || contract.name || 'Energy system installation',
-        description: render(section?.systemLineDescription, payload) || '',
+        name: render(section?.systemLineName, templateSource) || contract.name || 'Energy system installation',
+        description: render(section?.systemLineDescription, templateSource) || '',
         amount: contract.net_of_tax,
         qty: 1,
         currency,
@@ -704,7 +719,9 @@ export class Processor {
       });
 
     const invoiceBody = {
-      name: render(section?.invoiceName, payload) || contract.name || 'Energy system installation',
+      name: render(section?.invoiceName, templateSource) || contract.name || 'Energy system installation',
+      invoiceNumberPrefix: this.config.ghl.invoiceNumberPrefix,
+      invoiceNumber,
       currency,
       businessDetails: business,
       contactDetails: {
@@ -732,7 +749,7 @@ export class Processor {
     };
     if (schedules.length > 1) invoiceBody.paymentSchedule = { type: 'percentage', schedules };
 
-    let terms = render(section?.termsNotes, payload);
+    let terms = render(section?.termsNotes, templateSource);
     if (businessAbn) terms = `${terms ?? ''}<p>ABN: ${businessAbn}</p>`;
     if (terms) invoiceBody.termsNotes = terms;
 
@@ -750,9 +767,11 @@ export class Processor {
     }
 
     const id = invoice._id ?? invoice.id;
-    this.store?.recordInvoice(payload.project.id, KEY, { id, amount: contract.total_amount });
+    // Accepted, so the number is now spent.
+    this.store?.commitInvoiceNumber(numberValue);
+    this.store?.recordInvoice(payload.project.id, KEY, { id, amount: contract.total_amount, invoiceNumber: invoiceReference });
     logger.info('contract invoiced', { invoiceId: id, total: contract.total_amount, tax: contract.tax_on_gross });
-    return [{ key: KEY, id, amount: contract.total_amount, sent: false }];
+    return [{ key: KEY, id, amount: contract.total_amount, invoiceNumber: invoiceReference, sent: false }];
   }
 
   async invoiceBusinessDetails() {

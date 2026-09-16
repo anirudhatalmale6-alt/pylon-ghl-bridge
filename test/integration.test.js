@@ -1959,3 +1959,72 @@ test('the tracker page escapes whatever Formbay returns', async () => {
   assert.doesNotMatch(html, /<script>alert/, 'an address is data, not markup');
   assert.match(html, /&lt;script&gt;/);
 });
+
+// --- invoice numbering -----------------------------------------------------
+
+test('invoices are numbered from INV-IE06001 and the customer quotes that number', async (t) => {
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  const body = h.ghl.findAll('POST', '/invoices/')[0].body;
+  assert.equal(body.invoiceNumberPrefix, 'INV-IE');
+  assert.equal(body.invoiceNumber, '06001', 'zero padded, and a plain integer so it can be incremented');
+
+  // The payment reference on the invoice is that number, not the Pylon job id.
+  assert.match(body.termsNotes, /Please quote reference:<\/strong> INV-IE06001 when making payment/);
+  assert.doesNotMatch(body.termsNotes, /oKcdQEqKvq962di/, 'the Pylon id is no longer the payment reference');
+});
+
+test('the number is only spent when GoHighLevel accepts the invoice', async (t) => {
+  // It goes into the request body, so it is chosen before anyone knows the
+  // invoice will be accepted. A rejection must not burn it.
+  const h = await harness({ config: SINGLE, ghl: { invoiceScope: false } });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  assert.equal(h.bridge.store.peekInvoiceNumber(6001), 6001, 'still the first number');
+  const record = h.bridge.store.get('oKcdQEqKvq962di');
+  assert.match(record.result.warnings.join(' '), /invoices.write/);
+});
+
+test('the sequence advances, survives a restart and never rewinds', async (t) => {
+  const { EventStore } = await import('../src/store.js');
+  const os = await import('node:os');
+  const fsm = await import('node:fs');
+  const dir = fsm.mkdtempSync(`${os.tmpdir()}/numbers-`);
+  t.after(() => fsm.rmSync(dir, { recursive: true, force: true }));
+
+  const store = new EventStore({ dataDir: dir });
+  assert.equal(store.peekInvoiceNumber(6001), 6001);
+  store.commitInvoiceNumber(6001);
+  assert.equal(store.peekInvoiceNumber(6001), 6002);
+  store.commitInvoiceNumber(6002);
+
+  // Replaying an older event must not hand 6002 out a second time.
+  store.commitInvoiceNumber(5999);
+  assert.equal(store.peekInvoiceNumber(6001), 6003);
+
+  // The disk is the record, not memory - the service restarts on every deploy.
+  const reopened = new EventStore({ dataDir: dir });
+  assert.equal(reopened.peekInvoiceNumber(6001), 6003);
+});
+
+test('two invoices never share a number', async (t) => {
+  const h = await harness({ config: SINGLE });
+  t.after(() => h.close());
+  await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  await new Promise((r) => setTimeout(r, 300));
+
+  // A second, different contract.
+  const second = JSON.parse(JSON.stringify(readFixture('event-signed.json')));
+  second.data.id = 'second-event-id';
+  second.data.relationships.solar_project.data.id = 'another-project';
+  await postWebhook(h.bridge.base, second);
+  await new Promise((r) => setTimeout(r, 400));
+
+  const numbers = h.ghl.findAll('POST', '/invoices/').map((c) => c.body.invoiceNumber);
+  assert.equal(new Set(numbers).size, numbers.length, `numbers must be unique, got ${numbers.join(', ')}`);
+});

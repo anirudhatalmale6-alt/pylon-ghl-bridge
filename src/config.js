@@ -170,6 +170,14 @@ export const config = {
     // GoHighLevel workflow calling POST /invoices/contract.
     invoiceOnStage: bool(process.env.GHL_INVOICE_ON_STAGE, false),
 
+    // Invoice numbering. The business asked for INV-IE06001 upwards, so the
+    // prefix carries the letters and the number is a plain integer that can be
+    // incremented. GoHighLevel accepts both fields and echoes them back —
+    // checked against the live API, including the leading zeros.
+    invoiceNumberPrefix: process.env.GHL_INVOICE_NUMBER_PREFIX ?? 'INV-IE',
+    invoiceNumberStart: int(process.env.GHL_INVOICE_NUMBER_START, 6001),
+    invoiceNumberPad: int(process.env.GHL_INVOICE_NUMBER_PAD, 5),
+
     // The GoHighLevel tax record to apply to the system line.
     //
     // `taxId` here is GHL's internal record id, which is NOT shown anywhere in

@@ -93,6 +93,13 @@ services:
       - key: GHL_INVOICE_TAX_ID
         sync: false
 
+      # Invoice numbering. The business asked for INV-IE06001 upwards. The
+      # counter lives on the disk, so the sequence survives a restart.
+      - key: GHL_INVOICE_NUMBER_PREFIX
+        value: INV-IE
+      - key: GHL_INVOICE_NUMBER_START
+        value: "6001"
+
       - key: GHL_INVOICE_SEND_ACTION
         value: none
       - key: GHL_INVOICE_DUE_DAYS
