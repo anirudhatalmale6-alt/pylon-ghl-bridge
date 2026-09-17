@@ -66,9 +66,11 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
     },
     callback: { url: '', secret: '', timeoutMs: 2000 },
     xero: {
+      // Mirrors the shipped default: nothing reaches Xero until it is asked for.
       enabled: false,
       clientId: '',
       clientSecret: '',
+      authMode: 'web_app',
       redirectUri: 'http://127.0.0.1/xero/callback',
       invoiceStatus: 'SUBMITTED',
       timeoutMs: 2000,

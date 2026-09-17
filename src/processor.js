@@ -2,8 +2,16 @@ import { IntegrationError } from './lib/errors.js';
 import { logger } from './lib/logger.js';
 import { eventRelationships, normalizePaymentEvent, normalizeSignedEvent, toE164 } from './normalize.js';
 import { buildCustomFields, cleanCustomFields, indexCustomFields, render, renderObject, toIsoDate } from './mapping.js';
+import { buildInvoice } from './xero.js';
 
 export const CONTRACT_INVOICE_KEY = 'contract';
+/**
+ * Kept under its OWN key, not merged with the GoHighLevel one: the two systems
+ * can succeed and fail independently, and "already invoiced" has to be
+ * answerable about each of them separately or a replay either skips Xero
+ * forever or bills it twice.
+ */
+export const XERO_INVOICE_KEY = 'contract:xero';
 export const SIGNED_EVENT = 'web_proposals.signed';
 export const PAYMENT_EVENT = 'gateway_payments.created';
 
@@ -12,11 +20,14 @@ export const PAYMENT_EVENT = 'gateway_payments.created';
  * Kept free of HTTP concerns so it can be exercised directly by the tests.
  */
 export class Processor {
-  constructor({ config, pylon, ghl, mapping, store = null }) {
+  constructor({ config, pylon, ghl, mapping, store = null, xero = null }) {
     this.config = config;
     this.pylon = pylon;
     this.ghl = ghl;
     this.mapping = mapping;
+    // Optional second home for the invoice. Only used when xero.enabled is on,
+    // which stays off while GoHighLevel is also syncing invoices across.
+    this.xero = xero;
     // Optional. Used to remember which GHL records a Pylon project landed in so
     // a later payment event can find them without a Pylon lookup.
     this.store = store;
@@ -596,11 +607,17 @@ export class Processor {
     const contract = payload.contract ?? {};
     const KEY = CONTRACT_INVOICE_KEY;
 
+    /**
+     * Already invoiced in GoHighLevel — but do NOT return here.
+     *
+     * The invoice goes to two places now, and they fail independently. If Xero
+     * was unreachable at signing, the warning tells them to replay the event;
+     * returning at this point would mean the replay stops before Xero is ever
+     * tried, and the advice would be a lie. So the GoHighLevel leg is skipped
+     * and the Xero leg still runs, guarded by its own never-twice check.
+     */
     const already = this.store?.lookupProject(payload.project.id)?.invoices?.[KEY];
-    if (already) {
-      logger.info('contract already invoiced, skipping', { invoiceId: already.id });
-      return [{ key: KEY, id: already.id, amount: already.amount, alreadyExisted: true, sent: false }];
-    }
+    if (already) logger.info('contract already invoiced in GoHighLevel', { invoiceId: already.id });
 
     // Refuse rather than guess. A missing invoice can be replayed; a tax invoice
     // sent to a customer with the wrong GST on it cannot be taken back.
@@ -655,7 +672,11 @@ export class Processor {
     const numberValue = this.store?.peekInvoiceNumber(this.config.ghl.invoiceNumberStart)
       ?? this.config.ghl.invoiceNumberStart;
     const invoiceNumber = String(numberValue).padStart(this.config.ghl.invoiceNumberPad, '0');
-    const invoiceReference = `${this.config.ghl.invoiceNumberPrefix}${invoiceNumber}`;
+    // On a replay the number is whatever the first attempt already gave the
+    // customer. Peeking a fresh one would put a different number on the Xero
+    // copy of an invoice they have already been asked to pay.
+    const invoiceReference = already?.invoiceNumber
+      ?? `${this.config.ghl.invoiceNumberPrefix}${invoiceNumber}`;
     // Templates address it as {{invoice.number}} / {{invoice.reference}}.
     const templateSource = { ...payload, invoice: { number: invoiceReference, sequence: numberValue } };
 
@@ -753,25 +774,147 @@ export class Processor {
     if (businessAbn) terms = `${terms ?? ''}<p>ABN: ${businessAbn}</p>`;
     if (terms) invoiceBody.termsNotes = terms;
 
-    let invoice;
-    try {
-      invoice = await this.ghl.createInvoice(invoiceBody);
-    } catch (error) {
-      warnings.push(
-        error.status === 401
-          ? 'No invoice was raised: the GoHighLevel token is missing the "invoices.write" scope. Everything else landed.'
-          : `No invoice was raised: ${error.message} Everything else landed.`,
-      );
-      logger.warn('single invoice creation failed', { error });
-      return [];
+    let id;
+    if (already) {
+      // Nothing to raise in GoHighLevel; this pass exists to finish the Xero leg.
+      id = already.id;
+    } else {
+      let invoice;
+      try {
+        invoice = await this.ghl.createInvoice(invoiceBody);
+      } catch (error) {
+        warnings.push(
+          error.status === 401
+            ? 'No invoice was raised: the GoHighLevel token is missing the "invoices.write" scope. Everything else landed.'
+            : `No invoice was raised: ${error.message} Everything else landed.`,
+        );
+        logger.warn('single invoice creation failed', { error });
+        return [];
+      }
+
+      id = invoice._id ?? invoice.id;
+      // Accepted, so the number is now spent.
+      this.store?.commitInvoiceNumber(numberValue);
+      this.store?.recordInvoice(payload.project.id, KEY, { id, amount: contract.total_amount, invoiceNumber: invoiceReference });
+      logger.info('contract invoiced', { invoiceId: id, total: contract.total_amount, tax: contract.tax_on_gross });
     }
 
-    const id = invoice._id ?? invoice.id;
-    // Accepted, so the number is now spent.
-    this.store?.commitInvoiceNumber(numberValue);
-    this.store?.recordInvoice(payload.project.id, KEY, { id, amount: contract.total_amount, invoiceNumber: invoiceReference });
-    logger.info('contract invoiced', { invoiceId: id, total: contract.total_amount, tax: contract.tax_on_gross });
-    return [{ key: KEY, id, amount: contract.total_amount, invoiceNumber: invoiceReference, sent: false }];
+    const xeroId = await this.raiseXeroInvoice({
+      payload,
+      contract,
+      items,
+      currency,
+      invoiceReference,
+      issueDate,
+      dueDate: invoiceBody.dueDate,
+      warnings,
+    });
+
+    return [{
+      key: KEY,
+      id,
+      amount: contract.total_amount,
+      invoiceNumber: invoiceReference,
+      sent: false,
+      ...(already ? { alreadyExisted: true } : {}),
+      ...(xeroId ? { xeroId } : {}),
+    }];
+  }
+
+  /**
+   * The same invoice again, written straight into Xero.
+   *
+   * Two things GoHighLevel's own Xero sync cannot do, both asked for by their
+   * accounts team: land the invoice in "Awaiting Approval" rather than Awaiting
+   * Payment, and keep GST off the STC rebate lines. GoHighLevel refuses to put
+   * any tax on a negative line, so those lines arrive in Xero bare and inherit
+   * whatever the Chart of Accounts says — which is GST on Income.
+   *
+   * Deliberately the LAST thing that happens, and deliberately unable to fail
+   * the job: by this point the customer's invoice already exists in
+   * GoHighLevel. A Xero outage should cost a warning and a replay, not the
+   * invoice.
+   */
+  async raiseXeroInvoice({ payload, contract, items, currency, invoiceReference, issueDate, dueDate, warnings }) {
+    if (!this.config.xero?.enabled || !this.xero) return null;
+
+    // Never twice. A duplicate invoice in an accounting system is far more work
+    // to unpick than a missing one is to replay.
+    const already = this.store?.lookupProject(payload.project.id)?.invoices?.[XERO_INVOICE_KEY];
+    if (already) {
+      logger.info('already in xero, skipping', { xeroId: already.id });
+      return already.id;
+    }
+
+    try {
+      const [systemLine, ...rebates] = items;
+      const body = buildInvoice({
+        contactId: await this.xeroContactId(payload),
+        contactName: payload.client.name,
+        contactEmail: payload.client.email,
+        invoiceNumber: invoiceReference,
+        // What the customer is asked to quote when they pay.
+        reference: invoiceReference,
+        issueDate,
+        dueDate,
+        currency,
+        systemLine: { description: xeroDescription(systemLine), amount: systemLine.amount },
+        rebateLines: rebates.map((line) => ({ description: xeroDescription(line), amount: line.amount })),
+        status: this.config.xero.invoiceStatus,
+      });
+
+      const result = await this.xero.call({ method: 'POST', path: '/Invoices', body });
+      const created = result?.Invoices?.[0];
+      if (!created?.InvoiceID) {
+        throw new Error('Xero accepted the request but returned no invoice.');
+      }
+
+      this.store?.recordInvoice(payload.project.id, XERO_INVOICE_KEY, {
+        id: created.InvoiceID,
+        amount: contract.total_amount,
+        invoiceNumber: invoiceReference,
+        status: created.Status,
+      });
+      logger.info('contract invoiced in xero', { xeroId: created.InvoiceID, status: created.Status });
+      return created.InvoiceID;
+    } catch (error) {
+      warnings.push(
+        `The invoice was raised in GoHighLevel but did NOT reach Xero: ${error.message} ` +
+          'Nothing was lost — replay this event once Xero is reachable.',
+      );
+      logger.warn('xero invoice creation failed', { error, invoiceReference });
+      return null;
+    }
+  }
+
+  /**
+   * The customer's Xero contact, matched on email before anything is created.
+   *
+   * Xero matches contacts by NAME, so posting an invoice with a name that is
+   * one character different from an existing contact silently creates a second
+   * one. Matching on email first keeps their contact list from filling up with
+   * near-duplicates of the same household.
+   *
+   * Returns null when there is no match, which leaves Xero to create the
+   * contact from the name and email on the invoice.
+   */
+  async xeroContactId(payload) {
+    const email = payload.client?.email;
+    if (!email) return null;
+    try {
+      // Xero's `where` takes a quoted string; an apostrophe in it would end the
+      // literal early, so a quote in an address rules the lookup out entirely.
+      if (email.includes('"')) return null;
+      const found = await this.xero.call({
+        method: 'GET',
+        path: `/Contacts?where=${encodeURIComponent(`EmailAddress=="${email}"`)}`,
+      });
+      return found?.Contacts?.[0]?.ContactID ?? null;
+    } catch (error) {
+      // Not fatal. Worst case Xero creates a contact that a human merges later.
+      logger.warn('xero contact lookup failed, letting xero match on name', { error });
+      return null;
+    }
   }
 
   async invoiceBusinessDetails() {
@@ -1181,6 +1324,32 @@ export function stageAmounts(stages = [], contractTotal) {
   }
 
   return amounts;
+}
+
+/**
+ * One GoHighLevel invoice line as a Xero description.
+ *
+ * GoHighLevel splits a line into a short `name` and a `description`, and the
+ * description holds HTML because GoHighLevel renders it. Xero renders none, so
+ * the tags have to go or the customer reads "<br>" on their invoice — the
+ * accounts team already asked once for this column to be shorter and plainer.
+ *
+ * `<br>` and `</p>` become newlines rather than vanishing, so an equipment list
+ * stays a list instead of collapsing into one run-on sentence.
+ */
+export function xeroDescription(line = {}) {
+  const html = [line.name, line.description].filter(Boolean).join('\n');
+  return html
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/\s*(p|div|li|tr)\s*>/gi, '\n')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**

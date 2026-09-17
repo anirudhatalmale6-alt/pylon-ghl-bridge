@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { startFakeGhl, startFakePylon, readFixture, SAMPLE_PDF } from './helpers/upstreams.js';
+import { startFakeGhl, startFakePylon, startFakeXero, readFixture, SAMPLE_PDF } from './helpers/upstreams.js';
 import { makeConfig, postWebhook, startBridge, WEBHOOK_SECRET } from './helpers/bridge.js';
 
 /**
@@ -2276,4 +2276,176 @@ test('the shipped default is the FREE web app, never the paid one', async () => 
   const { config: shipped } = await import('../src/config.js');
   assert.equal(shipped.xero.authMode, 'web_app');
   assert.equal(shipped.xero.enabled, false, 'and it still writes nothing until switched on');
+});
+
+// --- the invoice actually reaching Xero -------------------------------------
+
+/**
+ * Drives the whole signed-contract flow with Xero switched on, against a fake
+ * Xero. The token file is pre-written with a far-future expiry and a tenant, so
+ * the client never makes an auth call and the test exercises the invoice path.
+ */
+async function xeroHarness({ failInvoices = false, contacts = [], config = {} } = {}) {
+  const fake = await startFakeXero({ failInvoices, contacts });
+  const h = await harness({
+    config: {
+      ...SINGLE,
+      xero: { enabled: true, clientId: 'id', clientSecret: 'secret', apiBase: fake.base, ...(config.xero ?? {}) },
+    },
+  });
+  h.bridge.xero.write({
+    accessToken: 'test-access-token',
+    tenantId: 'tenant-abc',
+    expiresAt: Date.now() + 3600_000,
+  });
+  return { ...h, xero: fake, close: async () => { await h.close(); await fake.close(); } };
+}
+
+async function signContract(h) {
+  const res = await postWebhook(h.bridge.base, readFixture('event-signed.json'));
+  assert.equal(res.status, 202);
+  await h.bridge.queue.drain?.();
+  await new Promise((r) => setTimeout(r, 400));
+  return res;
+}
+
+test('the Xero invoice lands in Awaiting Approval with GST only on the system line', async (t) => {
+  const h = await xeroHarness();
+  t.after(() => h.close());
+  await signContract(h);
+
+  const posted = h.xero.invoices();
+  assert.equal(posted.length, 1, 'exactly one invoice reached Xero');
+  const invoice = posted[0].body.Invoices[0];
+
+  // The two things the accounts team asked for, asserted on what was actually
+  // sent rather than on the fact a request happened.
+  assert.equal(invoice.Status, 'SUBMITTED', 'SUBMITTED is what Xero shows as Awaiting Approval');
+
+  const [system, ...rebates] = invoice.LineItems;
+  assert.equal(system.TaxType, 'OUTPUT', 'GST on the full price before rebates');
+  assert.ok(system.UnitAmount > 0);
+  assert.ok(rebates.length >= 1, 'the fixture contract carries at least one rebate');
+  for (const line of rebates) {
+    assert.equal(line.TaxType, 'BASEXCLUDED', 'no GST on any of the STCs');
+    assert.ok(line.UnitAmount < 0, 'a rebate must come off the invoice, not add to it');
+  }
+  // Nothing may be left to inherit the Chart of Accounts default.
+  assert.equal(invoice.LineItems.every((l) => l.TaxType), true);
+});
+
+test('the Xero invoice carries the same number the customer is asked to quote', async (t) => {
+  const h = await xeroHarness();
+  t.after(() => h.close());
+  await signContract(h);
+
+  const invoice = h.xero.invoices()[0].body.Invoices[0];
+  const ghlInvoice = h.ghl.find('POST', '/invoices/')?.body;
+  const expected = `${ghlInvoice.invoiceNumberPrefix}${ghlInvoice.invoiceNumber}`;
+  // One invoice, one number, both systems. Accounts reconcile on this.
+  assert.equal(invoice.InvoiceNumber, expected);
+  assert.equal(invoice.Reference, expected);
+});
+
+test('an existing Xero contact is reused instead of a near-duplicate being made', async (t) => {
+  // The email the fixture contract is signed with.
+  const contact = { ContactID: 'contact-xyz', EmailAddress: 'andre@example.com', Name: 'Andre Example' };
+  const h = await xeroHarness({ contacts: [contact] });
+  t.after(() => h.close());
+  await signContract(h);
+
+  const lookup = h.xero.calls.find((c) => c.path === '/Contacts');
+  assert.ok(lookup, 'the email was looked up before anything was created');
+  const invoice = h.xero.invoices()[0].body.Invoices[0];
+  // Xero matches on NAME, so posting a name that differs by a character makes a
+  // SECOND contact for the same customer and their contact list rots.
+  assert.equal(invoice.Contact.ContactID, 'contact-xyz');
+  assert.equal(invoice.Contact.Name, undefined);
+});
+
+test('a Xero outage costs a warning, never the customer invoice', async (t) => {
+  const h = await xeroHarness({ failInvoices: true });
+  t.after(() => h.close());
+  await signContract(h);
+
+  // The GoHighLevel invoice is the customer's. It must survive Xero being down.
+  assert.ok(h.ghl.find('POST', '/invoices/'), 'the invoice still exists in GoHighLevel');
+
+  const { warnings } = h.bridge.store.get('oKcdQEqKvq962di').result;
+  assert.ok(
+    warnings.some((w) => /did NOT reach Xero/.test(w)),
+    `expected a Xero warning, got ${JSON.stringify(warnings)}`,
+  );
+  // And it must say the invoice itself is safe, or someone re-raises it by hand.
+  assert.match(warnings.join(' '), /Nothing was lost/);
+});
+
+test('replaying a signed contract does not invoice Xero twice', async (t) => {
+  const h = await xeroHarness();
+  t.after(() => h.close());
+  await signContract(h);
+  assert.equal(h.xero.invoices().length, 1);
+
+  // A duplicate invoice in an accounting system is far worse than a missing one.
+  await fetch(`${h.bridge.base}/events/oKcdQEqKvq962di/replay?token=admin-test-token`, { method: 'POST' });
+  await h.bridge.queue.drain?.();
+  await new Promise((r) => setTimeout(r, 400));
+
+  assert.equal(h.xero.invoices().length, 1, 'still exactly one invoice in Xero');
+});
+
+test('Xero receives nothing at all while it is switched off', async (t) => {
+  const fake = await startFakeXero();
+  const h = await harness({ config: SINGLE });
+  t.after(async () => { await h.close(); await fake.close(); });
+  await signContract(h);
+  // The control for every test above: with enabled:false the same contract must
+  // reach GoHighLevel and nothing else. GHL syncs to Xero too, and both running
+  // means every invoice lands there twice.
+  assert.ok(h.ghl.find('POST', '/invoices/'));
+  assert.equal(fake.calls.length, 0);
+});
+
+test('GoHighLevel HTML does not reach a Xero invoice line', async () => {
+  const { xeroDescription } = await import('../src/processor.js');
+  // The equipment list is joined with <br> for GoHighLevel, which renders it.
+  // Xero renders nothing, so the customer would read the tags.
+  const out = xeroDescription({
+    name: 'Solar & battery system',
+    description: '12 x Trina 440W<br>1 x Sungrow SH10RS<br><p>Menangle NSW 2568</p>',
+  });
+  assert.doesNotMatch(out, /<[^>]+>/, 'no tags survive');
+  assert.match(out, /Solar & battery system/, 'entities are decoded, not left as &amp;');
+  // The list must stay a list rather than collapsing into a run-on sentence.
+  assert.match(out, /12 x Trina 440W\n1 x Sungrow SH10RS/);
+});
+
+test('replaying after a Xero outage finishes the job instead of skipping it', async (t) => {
+  // The warning tells them to replay once Xero is reachable. That advice was a
+  // lie: the "already invoiced in GoHighLevel" check returned before the Xero
+  // leg was ever attempted, so the replay silently did nothing and the invoice
+  // never arrived in Xero at all.
+  const fake = await startFakeXero({ failInvoices: true });
+  const h = await harness({
+    config: { ...SINGLE, xero: { enabled: true, clientId: 'id', clientSecret: 'secret', apiBase: fake.base } },
+  });
+  t.after(async () => { await h.close(); await fake.close(); });
+  h.bridge.xero.write({ accessToken: 't', tenantId: 'tenant-abc', expiresAt: Date.now() + 3600_000 });
+
+  await signContract(h);
+  assert.equal(fake.invoices().length, 1, 'tried once and was refused');
+  const first = h.ghl.find('POST', '/invoices/').body;
+
+  // Xero comes back.
+  fake.failInvoices = false;
+  await fetch(`${h.bridge.base}/events/oKcdQEqKvq962di/replay?token=admin-test-token`, { method: 'POST' });
+  await h.bridge.queue.drain?.();
+  await new Promise((r) => setTimeout(r, 400));
+
+  assert.equal(fake.invoices().length, 2, 'the replay tried Xero again');
+  assert.equal(h.ghl.findAll('POST', '/invoices/').length, 1, 'and did NOT raise a second customer invoice');
+
+  // The Xero copy must carry the number the customer was already given.
+  const xeroInvoice = fake.invoices().at(-1).body.Invoices[0];
+  assert.equal(xeroInvoice.InvoiceNumber, `${first.invoiceNumberPrefix}${first.invoiceNumber}`);
 });

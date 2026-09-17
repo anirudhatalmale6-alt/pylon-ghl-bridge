@@ -51,10 +51,13 @@ export const WEB_APP = 'web_app';
 export const CUSTOM_CONNECTION = 'custom_connection';
 
 export class XeroClient {
-  constructor({ clientId, clientSecret, redirectUri, dataDir, authMode = WEB_APP, timeoutMs = 20000 } = {}) {
+  constructor({ clientId, clientSecret, redirectUri, dataDir, authMode = WEB_APP, apiBase = API_BASE, timeoutMs = 20000 } = {}) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.redirectUri = redirectUri;
+    // Overridable so the tests can drive the real client against a fake Xero
+    // rather than a hand-written stub of it.
+    this.apiBase = apiBase;
     this.authMode = authMode === CUSTOM_CONNECTION ? CUSTOM_CONNECTION : WEB_APP;
     this.timeoutMs = timeoutMs;
     this.file = path.join(dataDir, 'xero-tokens.json');
@@ -276,7 +279,7 @@ export class XeroClient {
     const { data } = await requestJson({
       system: 'Xero',
       method,
-      url: `${API_BASE}${urlPath}`,
+      url: `${this.apiBase}${urlPath}`,
       headers: {
         Authorization: `Bearer ${token}`,
         'Xero-tenant-id': tenantId,
@@ -317,7 +320,7 @@ export function tenantFromToken(accessToken) {
  * LineAmountTypes is Exclusive because the system line amount is the ex-GST
  * figure, the same one already sent to GoHighLevel.
  */
-export function buildInvoice({ contactName, contactEmail, invoiceNumber, reference, issueDate, dueDate, currency = 'AUD', systemLine, rebateLines = [], status = 'SUBMITTED' }) {
+export function buildInvoice({ contactId, contactName, contactEmail, invoiceNumber, reference, issueDate, dueDate, currency = 'AUD', systemLine, rebateLines = [], status = 'SUBMITTED' }) {
   const lineItems = [
     {
       Description: systemLine.description,
@@ -338,7 +341,12 @@ export function buildInvoice({ contactName, contactEmail, invoiceNumber, referen
     Invoices: [
       {
         Type: 'ACCREC',
-        Contact: { Name: contactName, ...(contactEmail ? { EmailAddress: contactEmail } : {}) },
+        // A matched ContactID wins: Xero matches on NAME otherwise, so a name
+        // that differs by a character quietly creates a second contact for the
+        // same customer.
+        Contact: contactId
+          ? { ContactID: contactId }
+          : { Name: contactName, ...(contactEmail ? { EmailAddress: contactEmail } : {}) },
         Date: issueDate,
         DueDate: dueDate,
         InvoiceNumber: invoiceNumber,

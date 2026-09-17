@@ -33,11 +33,12 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const pylon = new PylonClient(config.pylon);
   const ghl = new GhlClient({ ...config.ghl, dryRun: config.dryRun });
   const store = new EventStore({ dataDir: config.dataDir, retentionDays: config.retentionDays });
-  const processor = new Processor({ config, pylon, ghl, mapping, store });
+  // Before the processor, which takes it as a dependency.
+  const xero = new XeroClient({ ...config.xero, dataDir: config.dataDir });
+  const processor = new Processor({ config, pylon, ghl, mapping, store, xero });
   const notify = createNotifier(config.callback);
   const formbayLog = new FormbayLog({ dataDir: config.dataDir });
   const tracker = new Tracker({ dataDir: config.dataDir, client: new FormbayClient(config.formbay) });
-  const xero = new XeroClient({ ...config.xero, dataDir: config.dataDir });
 
   for (const warning of configWarnings(config)) logger.warn(warning);
   for (const warning of mapping.warnings ?? []) logger.warn(warning);

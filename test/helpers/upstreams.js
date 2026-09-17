@@ -323,3 +323,63 @@ export async function startFakeGhl({ existingOpportunities = [], fields = GHL_FI
 function json(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(payload));
 }
+
+/**
+ * A fake Xero, enough to answer the two calls the bridge makes: find a contact
+ * by email, and post an invoice.
+ *
+ * Deliberately a real HTTP server rather than a stub object, so the tests run
+ * through XeroClient.call() — headers, JSON encoding and error handling
+ * included — instead of through a hand-written imitation of it that would agree
+ * with whatever the code happens to do.
+ */
+export async function startFakeXero({ failInvoices = false, contacts = [] } = {}) {
+  const calls = [];
+  // Mutable so a test can bring Xero back up mid-flight and replay against it.
+  const state = { failInvoices };
+  const server = http.createServer(async (req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    const bodyBuffer = await readBody(req);
+    let body = null;
+    if (bodyBuffer.length) {
+      try {
+        body = JSON.parse(bodyBuffer.toString('utf8'));
+      } catch {
+        body = bodyBuffer.toString('utf8');
+      }
+    }
+    calls.push({ method: req.method, path: url.pathname, query: url.searchParams.get('where'), body, headers: req.headers });
+
+    if (req.method === 'GET' && url.pathname === '/Contacts') {
+      const where = url.searchParams.get('where') ?? '';
+      const email = where.match(/EmailAddress=="([^"]*)"/)?.[1];
+      const match = contacts.filter((c) => c.EmailAddress === email);
+      return json(res, 200, { Contacts: match });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/Invoices') {
+      if (state.failInvoices) return json(res, 400, { Message: 'Xero is having a bad day' });
+      const sent = body?.Invoices?.[0] ?? {};
+      return json(res, 200, {
+        Invoices: [{ ...sent, InvoiceID: 'xero-inv-1', Status: sent.Status ?? 'DRAFT' }],
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/Organisation') {
+      return json(res, 200, { Organisations: [{ Name: 'Heartz Electrical Pty Ltd', IsDemoCompany: false, CountryCode: 'AU' }] });
+    }
+
+    return json(res, 404, { Message: `no fake route for ${req.method} ${url.pathname}` });
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    server,
+    base: `http://127.0.0.1:${server.address().port}`,
+    calls,
+    set failInvoices(value) { state.failInvoices = value; },
+    get failInvoices() { return state.failInvoices; },
+    invoices: () => calls.filter((c) => c.method === 'POST' && c.path === '/Invoices'),
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
