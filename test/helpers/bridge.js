@@ -65,6 +65,15 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
       ...(overrides.ghl ?? {}),
     },
     callback: { url: '', secret: '', timeoutMs: 2000 },
+    xero: {
+      enabled: false,
+      clientId: '',
+      clientSecret: '',
+      redirectUri: 'http://127.0.0.1/xero/callback',
+      invoiceStatus: 'SUBMITTED',
+      timeoutMs: 2000,
+      ...(overrides.xero ?? {}),
+    },
     // Mirrors the shipped default: NO token, so the default harness exercises
     // the fail-closed path rather than a configuration nobody deploys.
     formbay: {
@@ -76,7 +85,7 @@ export function makeConfig({ pylonBase, ghlBase, overrides = {} }) {
     retentionDays: 90,
     // pylon and ghl are merged above, so drop them here rather than letting the
     // top-level spread replace the whole block.
-    ...(({ pylon, ghl, formbay, ...rest }) => rest)(overrides),
+    ...(({ pylon, ghl, formbay, xero, ...rest }) => rest)(overrides),
   };
 }
 

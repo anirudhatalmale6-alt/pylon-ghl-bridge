@@ -124,6 +124,22 @@ services:
       - key: ADMIN_TOKEN
         sync: false
 
+      # --- Xero ----------------------------------------------------------
+      # Writing invoices straight into Xero, so they land in Awaiting Approval
+      # and every line states its own tax type. OFF until GoHighLevel's own Xero
+      # invoice sync is disabled - otherwise every invoice lands in Xero twice.
+      - key: XERO_ENABLED
+        value: "false"
+      - key: XERO_CLIENT_ID
+        sync: false
+      - key: XERO_CLIENT_SECRET
+        sync: false
+      - key: XERO_REDIRECT_URI
+        value: https://pylon-ghl-bridge.onrender.com/xero/callback
+      # DRAFT | SUBMITTED | AUTHORISED. SUBMITTED is Xero's "Awaiting Approval".
+      - key: XERO_INVOICE_STATUS
+        value: SUBMITTED
+
       # --- Formbay -------------------------------------------------------
       # Formbay does not sign its webhook deliveries, so this shared secret is
       # the only thing protecting /webhooks/formbay. Set it BEFORE creating the

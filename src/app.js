@@ -12,6 +12,7 @@ import { loadMapping } from './mapping.js';
 import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
 import { FormbayClient } from './formbay-api.js';
 import { Tracker, renderPage, referencesFromCsv } from './tracker.js';
+import { XeroClient } from './xero.js';
 
 /**
  * Wires everything together and returns { app, store, queue, processor } so the
@@ -36,6 +37,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
   const notify = createNotifier(config.callback);
   const formbayLog = new FormbayLog({ dataDir: config.dataDir });
   const tracker = new Tracker({ dataDir: config.dataDir, client: new FormbayClient(config.formbay) });
+  const xero = new XeroClient({ ...config.xero, dataDir: config.dataDir });
 
   for (const warning of configWarnings(config)) logger.warn(warning);
   for (const warning of mapping.warnings ?? []) logger.warn(warning);
@@ -195,6 +197,64 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     if (error) return res.status(400).json({ ok: false, error });
     const added = tracker.add(references);
     return res.json({ ok: true, ...added, skipped });
+  });
+
+  // ---------------------------------------------------------------- xero
+
+  /**
+   * Starts the Xero consent flow. Opened once, by a human, in a browser.
+   *
+   * Guarded by the admin token: anyone who reached this could otherwise bind the
+   * service to THEIR Xero organisation and start writing invoices into it.
+   */
+  app.get('/xero/connect', requireAdmin(config), (req, res) => {
+    if (!xero.configured) {
+      return res.status(503).json({
+        ok: false,
+        error: 'Xero is not configured. Set XERO_CLIENT_ID, XERO_CLIENT_SECRET and XERO_REDIRECT_URI first.',
+      });
+    }
+    const { url, state } = xero.authorizeUrl();
+    // Remembered so the callback can prove the response belongs to this request.
+    xero.write({ ...(xero.read() ?? {}), pendingState: state });
+    return res.redirect(url);
+  });
+
+  app.get('/xero/callback', async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) return res.status(400).type('html').send(`<p>Xero refused the connection: ${String(error)}</p>`);
+    if (!code) return res.status(400).type('html').send('<p>Xero sent no authorisation code.</p>');
+
+    const expected = xero.read()?.pendingState;
+    if (!expected || state !== expected) {
+      logger.warn('xero callback state mismatch', { ip: req.ip });
+      return res.status(400).type('html').send('<p>That link did not come from the connect page. Start again at /xero/connect.</p>');
+    }
+
+    try {
+      await xero.exchangeCode(String(code));
+      const tenantId = await xero.tenantId();
+      const { tenantName } = xero.read() ?? {};
+      logger.info('xero connected', { tenantId, tenantName });
+      return res.type('html').send(`<p>Connected to <strong>${String(tenantName ?? tenantId)}</strong>. You can close this tab.</p>`);
+    } catch (err) {
+      logger.error('xero connection failed', { error: err });
+      return res.status(502).type('html').send(`<p>Could not complete the connection: ${err.message}</p>`);
+    }
+  });
+
+  app.get('/xero/status', requireAdmin(config), async (req, res) => {
+    const stored = xero.read();
+    return res.json({
+      ok: true,
+      configured: xero.configured,
+      connected: xero.connected,
+      writingInvoices: config.xero.enabled,
+      invoiceStatus: config.xero.invoiceStatus,
+      organisation: stored?.tenantName ?? null,
+      // Never the tokens themselves.
+      tokenUpdatedAt: stored?.updatedAt ?? null,
+    });
   });
 
   // -------------------------------------------------------------- health
@@ -510,7 +570,7 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     res.status(500).json({ ok: false, error: payload.message, detail: payload });
   });
 
-  return { app, store, queue, processor, pylon, ghl, config, notify, tracker };
+  return { app, store, queue, processor, pylon, ghl, config, notify, tracker, xero };
 }
 
 function describe(mappingFields = {}, index, model) {

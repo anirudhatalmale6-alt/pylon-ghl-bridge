@@ -87,6 +87,20 @@ export const config = {
     timeoutMs: int(process.env.FORMBAY_TIMEOUT_MS, 20000),
   },
 
+  // Writing invoices straight into Xero, instead of letting GoHighLevel sync
+  // them. OFF until deliberately switched on: GoHighLevel's own Xero sync has to
+  // be disabled first, or every invoice lands in Xero twice.
+  xero: {
+    enabled: bool(process.env.XERO_ENABLED, false),
+    clientId: process.env.XERO_CLIENT_ID || '',
+    clientSecret: process.env.XERO_CLIENT_SECRET || '',
+    // Must match a redirect URI registered on the Xero app exactly.
+    redirectUri: process.env.XERO_REDIRECT_URI || 'https://pylon-ghl-bridge.onrender.com/xero/callback',
+    // DRAFT | SUBMITTED | AUTHORISED. SUBMITTED is "Awaiting Approval".
+    invoiceStatus: process.env.XERO_INVOICE_STATUS || 'SUBMITTED',
+    timeoutMs: int(process.env.XERO_TIMEOUT_MS, 20000),
+  },
+
   pylon: {
     apiBase: (process.env.PYLON_API_BASE || 'https://api.getpylon.com').replace(/\/$/, ''),
     // Optional. Pylon only hands out API tokens once their support team enables

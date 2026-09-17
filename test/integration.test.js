@@ -2107,3 +2107,100 @@ test('a summary without a breakdown still renders rather than crashing', async (
   });
   assert.match(html, /<title>STC tracker/, 'the page is more useful empty than broken');
 });
+
+// --- writing invoices straight into Xero -----------------------------------
+
+test('the Xero invoice states a tax type on EVERY line', async () => {
+  const { buildInvoice, TAX_GST, TAX_NO_GST } = await import('../src/xero.js');
+  // Xero: "If TaxType isn't specified then Xero will use the default tax rate on
+  // the Chart of Accounts account that the line item is coded to." That fallback
+  // is exactly why GST was landing on the STC lines, so nothing may be left bare.
+  const body = buildInvoice({
+    contactName: 'A Customer',
+    invoiceNumber: 'INV-IE06001',
+    reference: 'INV-IE06001',
+    issueDate: '2026-09-17',
+    dueDate: '2026-11-16',
+    systemLine: { description: '6.3kW Solar system', amount: 25860 },
+    rebateLines: [
+      { description: 'Less STCs (43 x)', amount: 7178 },
+      { description: 'Less PRCs (1701 x)', amount: 3742.2 },
+    ],
+  });
+
+  const [invoice] = body.Invoices;
+  assert.equal(invoice.LineItems.length, 3);
+  for (const line of invoice.LineItems) {
+    assert.ok(line.TaxType, `every line must name its tax type, "${line.Description}" did not`);
+  }
+  assert.equal(invoice.LineItems[0].TaxType, TAX_GST, 'the system line carries GST');
+  assert.equal(invoice.LineItems[1].TaxType, TAX_NO_GST, 'the STC line must not');
+  assert.equal(invoice.LineItems[2].TaxType, TAX_NO_GST, 'nor the PRC line');
+
+  // The rebates come off, so they are negative amounts.
+  assert.equal(invoice.LineItems[1].UnitAmount, -7178);
+  assert.equal(invoice.LineItems[2].UnitAmount, -3742.2);
+  // Exclusive, because the system amount is the ex-GST figure.
+  assert.equal(invoice.LineAmountTypes, 'Exclusive');
+});
+
+test('the invoice lands in Awaiting Approval, not Awaiting Payment', async () => {
+  const { buildInvoice } = await import('../src/xero.js');
+  const dflt = buildInvoice({
+    contactName: 'A', invoiceNumber: 'INV-IE06001', issueDate: '2026-09-17', dueDate: '2026-11-16',
+    systemLine: { description: 'x', amount: 100 },
+  });
+  // SUBMITTED is what Xero shows as "Awaiting Approval". AUTHORISED - what
+  // GoHighLevel always sends - is Awaiting Payment, which is the complaint.
+  assert.equal(dflt.Invoices[0].Status, 'SUBMITTED');
+  assert.notEqual(dflt.Invoices[0].Status, 'AUTHORISED');
+
+  const asDraft = buildInvoice({
+    contactName: 'A', invoiceNumber: 'INV-IE06002', issueDate: '2026-09-17', dueDate: '2026-11-16',
+    systemLine: { description: 'x', amount: 100 }, status: 'DRAFT',
+  });
+  assert.equal(asDraft.Invoices[0].Status, 'DRAFT', 'still configurable');
+});
+
+test('a rebate given as a positive number still comes off the invoice', async () => {
+  const { buildInvoice } = await import('../src/xero.js');
+  // The stored figures are magnitudes. Passing one through unsigned would ADD to
+  // the invoice rather than subtract, and the customer would be overcharged.
+  const body = buildInvoice({
+    contactName: 'A', invoiceNumber: 'INV-IE06003', issueDate: '2026-09-17', dueDate: '2026-11-16',
+    systemLine: { description: 'x', amount: 100 },
+    rebateLines: [{ description: 'Less STCs', amount: 30 }, { description: 'Less PRCs', amount: -20 }],
+  });
+  assert.equal(body.Invoices[0].LineItems[1].UnitAmount, -30);
+  assert.equal(body.Invoices[0].LineItems[2].UnitAmount, -20, 'already negative stays negative');
+});
+
+test('Xero is off and unconnected until someone deliberately turns it on', async (t) => {
+  const h = await harness();
+  t.after(() => h.close());
+  const res = await fetch(`${h.bridge.base}/xero/status`, { headers: { authorization: 'Bearer admin-test-token' } });
+  const body = await res.json();
+  assert.equal(body.configured, false, 'no credentials by default');
+  assert.equal(body.connected, false);
+  assert.equal(body.writingInvoices, false, 'must never write to Xero until switched on - GHL syncs too');
+  assert.equal(body.organisation, null);
+  // The status endpoint must never hand back the tokens themselves.
+  assert.doesNotMatch(JSON.stringify(body), /accessToken|refreshToken/);
+});
+
+test('the consent callback refuses a response it did not ask for', async (t) => {
+  const h = await harness({ config: { xero: { clientId: 'id', clientSecret: 'secret' } } });
+  t.after(() => h.close());
+  // No pending state stored, so this code did not come from our connect page.
+  const res = await fetch(`${h.bridge.base}/xero/callback?code=abc&state=forged`);
+  assert.equal(res.status, 400);
+  assert.match(await res.text(), /did not come from the connect page/);
+});
+
+test('connecting needs the admin token', async (t) => {
+  const h = await harness({ config: { xero: { clientId: 'id', clientSecret: 'secret' } } });
+  t.after(() => h.close());
+  // Otherwise a stranger could bind the service to their own Xero organisation.
+  const res = await fetch(`${h.bridge.base}/xero/connect`, { redirect: 'manual' });
+  assert.equal(res.status, 401);
+});
