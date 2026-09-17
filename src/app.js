@@ -162,7 +162,14 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
       return res.status(401).type('html').send('<p>Add ?token=… to this address to see the tracker.</p>');
     }
     const { jobs } = tracker.read();
-    res.type('html').send(renderPage({ summary: tracker.summary(), jobs, token: req.query.token ?? '' }));
+    res.type('html').send(
+      renderPage({
+        summary: tracker.summary(),
+        jobs,
+        token: req.query.token ?? '',
+        status: req.query.status ? String(req.query.status) : null,
+      }),
+    );
   });
 
   app.get('/tracker/summary', requireAdmin(config), (req, res) => res.json({ ok: true, ...tracker.summary() }));

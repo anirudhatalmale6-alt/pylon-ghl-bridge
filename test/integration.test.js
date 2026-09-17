@@ -1952,7 +1952,8 @@ test('the tracker page escapes whatever Formbay returns', async () => {
   const { renderPage } = await import('../src/tracker.js');
   const html = renderPage({
     summary: { refreshedAt: null, total: 1, readable: 1, unreadable: 0,
-      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 0 }, totalValue: 0 },
+      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 0 }, totalValue: 0,
+      byStatus: [{ status: 'approved', count: 1, value: 0 }] },
     jobs: [{ reference: 'BSTC1', ok: true, address: '<script>alert(1)</script>', certificates: 1 }],
     token: 't',
   });
@@ -2046,11 +2047,63 @@ test('a job with no sold date is never labelled "not sold"', async () => {
   // no sold date. Calling those "not sold" would contradict their own books.
   const html = renderPage({
     summary: { refreshedAt: null, total: 1, readable: 1, unreadable: 0,
-      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 3809.72 }, totalValue: 3809.72 },
+      sold: { count: 0, value: 0 }, noSoldDate: { count: 1, value: 3809.72 }, totalValue: 3809.72,
+      byStatus: [{ status: 'approved', count: 1, value: 3809.72 }] },
     jobs: [{ reference: 'BSTC1', ok: true, status: 'approved', soldDate: null, value: 3809.72 }],
     token: 't',
   });
   assert.doesNotMatch(html, />not sold</, 'the page must not assert a sale has not happened');
   assert.match(html, />approved</, "Formbay's own status is shown instead");
   assert.match(html, /no sold date in Formbay/, 'and the heading says whose field it is');
+});
+
+test('the breakdown uses the statuses Formbay actually returns', async () => {
+  const { groupByStatus } = await import('../src/tracker.js');
+  // Formbay has no "pending" and no "scheduled". Inventing those names would
+  // mean deciding what "approved" means for their business, which is their call.
+  const groups = groupByStatus([
+    { ok: true, status: 'approved', soldDate: null, value: 100 },
+    { ok: true, status: 'approved', soldDate: null, value: 50 },
+    { ok: true, status: 'approved', soldDate: '01/09/2026', value: 200 },
+    { ok: true, status: 'rejected', soldDate: null, value: 25 },
+    { ok: false, error: 'Formbay could not find the request' },
+  ]);
+  const by = Object.fromEntries(groups.map((g) => [g.status, g]));
+  assert.equal(by.approved.count, 2, 'a job with a sold date is counted as sold, not approved');
+  assert.equal(by.approved.value, 150);
+  assert.equal(by.sold.count, 1);
+  assert.equal(by.sold.value, 200);
+  assert.equal(by.rejected.count, 1);
+  assert.equal(by['could not be read'].count, 1);
+  assert.equal(groups[0].count, 2, 'sorted with the biggest group first');
+  assert.ok(!groups.some((g) => ['pending', 'scheduled'].includes(g.status)), 'no invented statuses');
+});
+
+test('the page can be filtered to one status', async () => {
+  const { renderPage } = await import('../src/tracker.js');
+  const summary = { refreshedAt: null, total: 2, readable: 2, unreadable: 0,
+    sold: { count: 1, value: 200 }, noSoldDate: { count: 1, value: 100 }, totalValue: 300,
+    byStatus: [{ status: 'approved', count: 1, value: 100 }, { status: 'sold', count: 1, value: 200 }] };
+  const jobs = [
+    { reference: 'BSTC1', ok: true, status: 'approved', soldDate: null, value: 100 },
+    { reference: 'BSTC2', ok: true, status: 'approved', soldDate: '01/09/2026', value: 200 },
+  ];
+  const all = renderPage({ summary, jobs, token: 't' });
+  assert.match(all, /BSTC1/);
+  assert.match(all, /BSTC2/);
+
+  const filtered = renderPage({ summary, jobs, token: 't', status: 'approved' });
+  assert.match(filtered, /BSTC1/);
+  assert.doesNotMatch(filtered, /<td class="mono">BSTC2<\/td>/, 'the sold job is not in the approved list');
+  assert.match(filtered, /Showing only: approved/);
+});
+
+test('a summary without a breakdown still renders rather than crashing', async () => {
+  const { renderPage } = await import('../src/tracker.js');
+  const html = renderPage({
+    summary: { refreshedAt: null, total: 0, readable: 0, unreadable: 0,
+      sold: { count: 0, value: 0 }, noSoldDate: { count: 0, value: 0 }, totalValue: 0 },
+    jobs: [], token: 't',
+  });
+  assert.match(html, /<title>STC tracker/, 'the page is more useful empty than broken');
 });

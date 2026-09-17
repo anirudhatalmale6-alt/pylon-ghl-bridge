@@ -106,8 +106,30 @@ export class Tracker {
       sold: { count: sold.length, value: sum(sold) },
       noSoldDate: { count: unsold.length, value: sum(unsold) },
       totalValue: sum(live),
+      byStatus: groupByStatus(jobs),
     };
   }
+}
+
+/**
+ * A count and a total for each status Formbay actually returns.
+ *
+ * Deliberately NOT mapped onto words like "pending" or "scheduled". Formbay has
+ * no such statuses — what it returns is approved, new, in_progress, uploaded,
+ * rejected, plus a sold date on some. Inventing friendlier names would mean
+ * deciding, for example, that "approved" means pending, and that is a judgement
+ * about their business that belongs to them, not to me.
+ */
+export function groupByStatus(jobs = []) {
+  const groups = new Map();
+  for (const job of jobs) {
+    const key = !job.ok ? 'could not be read' : job.soldDate ? 'sold' : (job.status || 'no status');
+    const group = groups.get(key) ?? { status: key, count: 0, value: 0 };
+    group.count += 1;
+    group.value = Math.round((group.value + (job.value ?? 0)) * 100) / 100;
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
 }
 
 /**
@@ -165,8 +187,10 @@ const money = (v) => (typeof v === 'number' ? `$${v.toLocaleString('en-AU', { mi
  * client cannot open file attachments through the platform we talk on, so a URL
  * they can bookmark is the delivery mechanism.
  */
-export function renderPage({ summary, jobs, token }) {
-  const rows = jobs
+export function renderPage({ summary, jobs, token, status = null }) {
+  const statusOf = (j) => (!j.ok ? 'could not be read' : j.soldDate ? 'sold' : (j.status || 'no status'));
+  const shown = status ? jobs.filter((j) => statusOf(j) === status) : jobs;
+  const rows = shown
     .map((j) => {
       const state = !j.ok ? 'error' : j.soldDate ? 'sold' : 'pending';
       // Never invent "not sold": show whatever status Formbay holds.
@@ -221,6 +245,20 @@ form{display:inline}button{background:var(--navy);color:#fff;border:0;border-rad
   <div class="card"><b>${money(summary.sold.value)}</b><span>${summary.sold.count} with a sold date in Formbay</span></div>
   ${summary.unreadable ? `<div class="card"><b style="color:var(--bad)">${summary.unreadable}</b><span>could not be read</span></div>` : ''}
 </div>
+<div class="tablewrap" style="margin-bottom:16px"><table>
+<tr><th>Status in Formbay</th><th>Jobs</th><th>Certificate value</th><th></th></tr>
+${(summary.byStatus ?? []).map((g) => `<tr${status === g.status ? ' class="sold"' : ''}>
+  <td><strong>${esc(g.status)}</strong></td>
+  <td class="num">${g.count}</td>
+  <td class="num strong">${money(g.value)}</td>
+  <td><a href="/tracker?token=${encodeURIComponent(token ?? '')}&status=${encodeURIComponent(g.status)}">show only these</a></td>
+</tr>`).join('')}
+<tr><td><strong>All jobs</strong></td><td class="num"><strong>${summary.total}</strong></td>
+    <td class="num strong">${money(summary.totalValue)}</td>
+    <td><a href="/tracker?token=${encodeURIComponent(token ?? '')}">show all</a></td></tr>
+</table></div>
+
+${status ? `<p class="note" style="margin:0 0 10px"><strong>Showing only: ${esc(status)}</strong> &mdash; ${shown.length} of ${jobs.length} jobs.</p>` : ''}
 <div class="tablewrap"><table>
 <tr><th>Formbay #</th><th>Site</th><th>Certs</th><th>Price</th><th>Value</th><th>Job #</th><th>Status</th></tr>
 ${rows || '<tr><td colspan="7">Nothing tracked yet.</td></tr>'}
