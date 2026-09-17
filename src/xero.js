@@ -35,21 +35,52 @@ export const SCOPES = 'offline_access accounting.transactions accounting.contact
 export const TAX_GST = 'OUTPUT';
 export const TAX_NO_GST = 'BASEXCLUDED';
 
+/**
+ * Xero sells two kinds of app and they authenticate completely differently.
+ *
+ *   web_app           - free. Authorization-code flow: a human clicks through a
+ *                       consent screen once, and we then hold a refresh token
+ *                       that Xero rotates on every use.
+ *   custom_connection - $10/month AUD. Client-credentials flow: no consent
+ *                       screen, no refresh token, no expiry. One organisation.
+ *
+ * Both are supported because the business may move between them, and the choice
+ * is a billing decision rather than a technical one.
+ */
+export const WEB_APP = 'web_app';
+export const CUSTOM_CONNECTION = 'custom_connection';
+
 export class XeroClient {
-  constructor({ clientId, clientSecret, redirectUri, dataDir, timeoutMs = 20000 } = {}) {
+  constructor({ clientId, clientSecret, redirectUri, dataDir, authMode = WEB_APP, timeoutMs = 20000 } = {}) {
     this.clientId = clientId;
     this.clientSecret = clientSecret;
     this.redirectUri = redirectUri;
+    this.authMode = authMode === CUSTOM_CONNECTION ? CUSTOM_CONNECTION : WEB_APP;
     this.timeoutMs = timeoutMs;
     this.file = path.join(dataDir, 'xero-tokens.json');
     if (dataDir) fs.mkdirSync(dataDir, { recursive: true });
   }
 
+  get usesClientCredentials() {
+    return this.authMode === CUSTOM_CONNECTION;
+  }
+
   get configured() {
+    // A custom connection never redirects anywhere, so it needs no redirect URI.
+    if (this.usesClientCredentials) return Boolean(this.clientId && this.clientSecret);
     return Boolean(this.clientId && this.clientSecret && this.redirectUri);
   }
 
+  /**
+   * Whether we can actually reach an organisation.
+   *
+   * For a custom connection, holding valid credentials is NOT the same as being
+   * connected: Xero issues a perfectly good token for a connection nobody has
+   * authorised yet, and every API call then returns 403. The tenant id is the
+   * honest signal, so that is what this reports.
+   */
   get connected() {
+    if (this.usesClientCredentials) return Boolean(this.read()?.tenantId);
     return Boolean(this.read()?.refreshToken);
   }
 
@@ -105,6 +136,40 @@ export class XeroClient {
     return this.store(data);
   }
 
+  /**
+   * A custom connection's token, from the client credentials alone.
+   *
+   * There is no refresh token and nothing to rotate — when the current one
+   * expires we simply ask for another.
+   */
+  async clientCredentialsToken() {
+    const { data } = await requestJson({
+      system: 'Xero',
+      method: 'POST',
+      url: TOKEN_URL,
+      headers: { Authorization: this.basicAuth(), 'Content-Type': 'application/x-www-form-urlencoded' },
+      // Deliberately no `scope`: Xero grants the scopes chosen on the connection
+      // itself, and naming one it was not given fails the whole request with
+      // "Client credentials scope validation failed".
+      body: new URLSearchParams({ grant_type: 'client_credentials' }).toString(),
+      timeoutMs: this.timeoutMs,
+    });
+    if (!data?.access_token) {
+      throw new IntegrationError('Xero returned no access token for those client credentials.', {
+        kind: 'auth',
+        system: 'Xero',
+      });
+    }
+    return this.write({
+      ...(this.read() ?? {}),
+      accessToken: data.access_token,
+      expiresAt: Date.now() + Number(data.expires_in ?? 1800) * 1000,
+      // The organisation is a claim inside the token, not a separate lookup.
+      tenantId: tenantFromToken(data.access_token) ?? this.read()?.tenantId ?? null,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
   async refresh() {
     const current = this.read();
     if (!current?.refreshToken) {
@@ -142,14 +207,36 @@ export class XeroClient {
   async accessToken() {
     const current = this.read();
     if (current?.accessToken && Date.now() < current.expiresAt - 60_000) return current.accessToken;
-    const refreshed = await this.refresh();
-    return refreshed.accessToken;
+    const fresh = this.usesClientCredentials ? await this.clientCredentialsToken() : await this.refresh();
+    return fresh.accessToken;
   }
 
   /** Which Xero organisation this connection is for. Cached after the first call. */
   async tenantId() {
     const current = this.read();
     if (current?.tenantId) return current.tenantId;
+
+    /**
+     * A custom connection cannot use /connections at all — it answers
+     * "Xero-User-Id and/or Xero-Tenant-Id header must be supplied", which is the
+     * header we are trying to discover. The organisation arrives as the
+     * `xero_tenant_id` claim inside the token instead.
+     *
+     * The claim is ABSENT until somebody completes the authorisation email Xero
+     * sends the nominated user. Before that the token is valid and every API
+     * call returns a bare 403, so this says what is actually wrong.
+     */
+    if (this.usesClientCredentials) {
+      const { tenantId } = await this.clientCredentialsToken();
+      if (!tenantId) {
+        throw new IntegrationError(
+          'This Xero custom connection has not been authorised yet. The nominated user needs to open the connection email from Xero and pick the organisation.',
+          { kind: 'auth', system: 'Xero' },
+        );
+      }
+      return tenantId;
+    }
+
     const token = await this.accessToken();
     const { data } = await requestJson({
       system: 'Xero',
@@ -164,6 +251,23 @@ export class XeroClient {
     }
     this.write({ ...this.read(), tenantId: tenant.tenantId, tenantName: tenant.tenantName });
     return tenant.tenantId;
+  }
+
+  /**
+   * The organisation this connection actually reaches, asked of Xero rather
+   * than taken from what was stored at connect time.
+   *
+   * Worth one call before anything is billed: it is the difference between "the
+   * credentials work" and "the credentials point at Inspire Energy", and a
+   * demo company answers just as happily as the real one.
+   */
+  async organisation() {
+    const data = await this.call({ method: 'GET', path: '/Organisation' });
+    const org = data?.Organisations?.[0];
+    if (!org) return null;
+    const name = org.Name ?? null;
+    this.write({ ...(this.read() ?? {}), tenantName: name, isDemoCompany: Boolean(org.IsDemoCompany) });
+    return { name, legalName: org.LegalName ?? null, countryCode: org.CountryCode ?? null, isDemoCompany: Boolean(org.IsDemoCompany) };
   }
 
   async call({ method, path: urlPath, body }) {
@@ -183,6 +287,25 @@ export class XeroClient {
       timeoutMs: this.timeoutMs,
     });
     return data;
+  }
+}
+
+/**
+ * The organisation id out of a Xero access token.
+ *
+ * Only the claim is read — the signature is Xero's to verify, not ours. Nothing
+ * here is a security decision: a forged token would simply be rejected by the
+ * API on the next call.
+ */
+export function tenantFromToken(accessToken) {
+  const part = String(accessToken ?? '').split('.')[1];
+  if (!part) return null;
+  try {
+    const padded = part + '='.repeat((4 - (part.length % 4)) % 4);
+    const claims = JSON.parse(Buffer.from(padded, 'base64url').toString('utf8'));
+    return claims.xero_tenant_id ?? null;
+  } catch {
+    return null;
   }
 }
 

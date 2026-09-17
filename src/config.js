@@ -94,7 +94,12 @@ export const config = {
     enabled: bool(process.env.XERO_ENABLED, false),
     clientId: process.env.XERO_CLIENT_ID || '',
     clientSecret: process.env.XERO_CLIENT_SECRET || '',
-    // Must match a redirect URI registered on the Xero app exactly.
+    // web_app (free, consent screen, rotating refresh token) or
+    // custom_connection ($10/month AUD, no consent screen, never expires).
+    // Which one this is depends on what was created in Xero, not on preference.
+    authMode: process.env.XERO_AUTH_MODE === 'custom_connection' ? 'custom_connection' : 'web_app',
+    // Must match a redirect URI registered on the Xero app exactly. Unused by a
+    // custom connection, which never redirects anywhere.
     redirectUri: process.env.XERO_REDIRECT_URI || 'https://pylon-ghl-bridge.onrender.com/xero/callback',
     // DRAFT | SUBMITTED | AUTHORISED. SUBMITTED is "Awaiting Approval".
     invoiceStatus: process.env.XERO_INVOICE_STATUS || 'SUBMITTED',

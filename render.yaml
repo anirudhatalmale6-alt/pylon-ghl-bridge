@@ -134,6 +134,14 @@ services:
         sync: false
       - key: XERO_CLIENT_SECRET
         sync: false
+      # web_app or custom_connection. This is not a preference - it must match
+      # what was actually created in Xero, because the two authenticate by
+      # different grants. A web app is free and needs a human to click a consent
+      # screen; a custom connection is $10/month AUD and never needs
+      # re-authorising. Defaults to the free one.
+      - key: XERO_AUTH_MODE
+        value: web_app
+      # Only a web app redirects anywhere. Ignored by a custom connection.
       - key: XERO_REDIRECT_URI
         value: https://pylon-ghl-bridge.onrender.com/xero/callback
       # DRAFT | SUBMITTED | AUTHORISED. SUBMITTED is Xero's "Awaiting Approval".

@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { startFakeGhl, startFakePylon, readFixture, SAMPLE_PDF } from './helpers/upstreams.js';
 import { makeConfig, postWebhook, startBridge, WEBHOOK_SECRET } from './helpers/bridge.js';
 
@@ -2203,4 +2206,74 @@ test('connecting needs the admin token', async (t) => {
   // Otherwise a stranger could bind the service to their own Xero organisation.
   const res = await fetch(`${h.bridge.base}/xero/connect`, { redirect: 'manual' });
   assert.equal(res.status, 401);
+});
+
+// --- custom connection (the paid Xero app type) -----------------------------
+
+test('the organisation is read from the token claim, not from /connections', async () => {
+  const { tenantFromToken } = await import('../src/xero.js');
+  // A custom connection cannot call /connections at all: it answers "Xero-User-Id
+  // and/or Xero-Tenant-Id header must be supplied", which is the very header we
+  // are trying to discover. The tenant is a claim inside the access token.
+  const claims = Buffer.from(JSON.stringify({ xero_tenant_id: 'tenant-abc', client_id: 'x' })).toString('base64url');
+  assert.equal(tenantFromToken(`header.${claims}.signature`), 'tenant-abc');
+});
+
+test('an unauthorised custom connection is reported as NOT connected', async () => {
+  const { tenantFromToken } = await import('../src/xero.js');
+  // Xero issues a perfectly valid token for a connection nobody has authorised
+  // yet - it simply carries no xero_tenant_id, and every API call then 403s.
+  // Treating "we got a token" as "we are connected" would mean discovering that
+  // at the moment we tried to bill somebody.
+  const claims = Buffer.from(JSON.stringify({ client_id: 'x', scope: 'accounting.invoices' })).toString('base64url');
+  assert.equal(tenantFromToken(`header.${claims}.signature`), null);
+  assert.equal(tenantFromToken('not-a-token'), null);
+  assert.equal(tenantFromToken(''), null);
+});
+
+test('a custom connection needs no redirect URI but does need a tenant', async (t) => {
+  const { XeroClient, CUSTOM_CONNECTION } = await import('../src/xero.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xero-cc-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const client = new XeroClient({ clientId: 'id', clientSecret: 'secret', redirectUri: '', dataDir: dir, authMode: CUSTOM_CONNECTION });
+  assert.equal(client.usesClientCredentials, true);
+  assert.equal(client.configured, true, 'a custom connection never redirects anywhere');
+  assert.equal(client.connected, false, 'credentials alone are not a connection');
+
+  client.write({ refreshToken: 'whatever' });
+  assert.equal(client.connected, false, 'a refresh token is meaningless here - only the tenant counts');
+  client.write({ tenantId: 'tenant-abc' });
+  assert.equal(client.connected, true);
+});
+
+test('/xero/connect explains itself rather than redirecting a custom connection', async (t) => {
+  const h = await harness({ config: { xero: { clientId: 'id', clientSecret: 'secret', authMode: 'custom_connection' } } });
+  t.after(() => h.close());
+  const res = await fetch(`${h.bridge.base}/xero/connect?token=admin-test-token`, { redirect: 'manual' });
+  // Sending someone to a consent screen that cannot exist wastes the one
+  // instruction they were going to follow.
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /email Xero sends/);
+});
+
+test('a web app still uses the consent flow', async (t) => {
+  const { XeroClient } = await import('../src/xero.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xero-web-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // The control: the default must not quietly become the paid mode.
+  const client = new XeroClient({ clientId: 'id', clientSecret: 'secret', redirectUri: 'https://x/cb', dataDir: dir });
+  assert.equal(client.usesClientCredentials, false);
+  client.write({ refreshToken: 'r' });
+  assert.equal(client.connected, true, 'a web app connection IS its refresh token');
+  assert.match(client.authorizeUrl().url, /login\.xero\.com/);
+});
+
+test('the shipped default is the FREE web app, never the paid one', async () => {
+  // Nobody should start paying Xero $10/month because a default drifted. The
+  // paid mode has to be asked for by name.
+  delete process.env.XERO_AUTH_MODE;
+  const { config: shipped } = await import('../src/config.js');
+  assert.equal(shipped.xero.authMode, 'web_app');
+  assert.equal(shipped.xero.enabled, false, 'and it still writes nothing until switched on');
 });

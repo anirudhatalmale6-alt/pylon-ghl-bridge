@@ -214,6 +214,15 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
         error: 'Xero is not configured. Set XERO_CLIENT_ID, XERO_CLIENT_SECRET and XERO_REDIRECT_URI first.',
       });
     }
+    // A custom connection has no consent screen to send anybody to: it is
+    // authorised from the email Xero sends the nominated user. Saying so beats
+    // redirecting to a Xero page that will only refuse.
+    if (xero.usesClientCredentials) {
+      return res.status(400).json({
+        ok: false,
+        error: 'This is a Xero custom connection, which is authorised from the email Xero sends the nominated user, not from here. Check /xero/status to see whether that has been done.',
+      });
+    }
     const { url, state } = xero.authorizeUrl();
     // Remembered so the callback can prove the response belongs to this request.
     xero.write({ ...(xero.read() ?? {}), pendingState: state });
@@ -245,16 +254,35 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
 
   app.get('/xero/status', requireAdmin(config), async (req, res) => {
     const stored = xero.read();
-    return res.json({
+    const body = {
       ok: true,
       configured: xero.configured,
+      authMode: config.xero.authMode,
       connected: xero.connected,
       writingInvoices: config.xero.enabled,
       invoiceStatus: config.xero.invoiceStatus,
       organisation: stored?.tenantName ?? null,
       // Never the tokens themselves.
       tokenUpdatedAt: stored?.updatedAt ?? null,
-    });
+    };
+
+    /**
+     * `?check=1` asks Xero rather than reporting what we last wrote down.
+     *
+     * Kept opt-in because it is two HTTP calls, but it is the only answer worth
+     * having before switching invoicing on: credentials that mint a token
+     * happily still reach nothing until the connection is authorised.
+     */
+    if (req.query.check && xero.configured) {
+      try {
+        const org = await xero.organisation();
+        body.live = { reachable: true, organisation: org?.name ?? null, isDemoCompany: org?.isDemoCompany ?? null };
+      } catch (err) {
+        body.live = { reachable: false, error: err.message };
+      }
+    }
+
+    return res.json(body);
   });
 
   // -------------------------------------------------------------- health
