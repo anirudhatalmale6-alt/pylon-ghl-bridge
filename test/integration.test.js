@@ -2449,3 +2449,18 @@ test('replaying after a Xero outage finishes the job instead of skipping it', as
   const xeroInvoice = fake.invoices().at(-1).body.Invoices[0];
   assert.equal(xeroInvoice.InvoiceNumber, `${first.invoiceNumberPrefix}${first.invoiceNumber}`);
 });
+
+test('the Xero scopes are the ones the real app actually accepts', async () => {
+  const { SCOPES } = await import('../src/xero.js');
+  // Verified against Inspire Energy's real Xero app on 19 Sep 2026:
+  //   offline_access accounting.transactions ... -> invalid_scope
+  //   offline_access accounting.invoices     ... -> accepted
+  // Xero moved new apps to granular scopes in April 2026 and refuses the broad
+  // one, failing the WHOLE authorize request without naming the bad scope.
+  assert.doesNotMatch(SCOPES, /accounting\.transactions/, 'the broad scope is refused by apps created after April 2026');
+  assert.match(SCOPES, /accounting\.invoices/, 'raising an invoice needs this');
+  assert.match(SCOPES, /accounting\.contacts/, 'matching the customer needs this');
+  // Without offline_access there is no refresh token, so the connection dies in
+  // 30 minutes and never comes back.
+  assert.match(SCOPES, /(^|\s)offline_access(\s|$)/);
+});

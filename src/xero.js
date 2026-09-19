@@ -28,8 +28,20 @@ const TOKEN_URL = 'https://identity.xero.com/connect/token';
 const CONNECTIONS_URL = 'https://api.xero.com/connections';
 const API_BASE = 'https://api.xero.com/api.xro/2.0';
 
-/** offline_access is what gets us a refresh token at all. */
-export const SCOPES = 'offline_access accounting.transactions accounting.contacts accounting.settings.read';
+/**
+ * `offline_access` is what gets us a refresh token at all.
+ *
+ * `accounting.invoices`, NOT `accounting.transactions`. Xero moved new apps onto
+ * granular scopes in April 2026 and the broad one is refused outright — the
+ * whole authorize request comes back `invalid_scope`, with nothing to say which
+ * scope was at fault. Verified against the real app: the string below is
+ * accepted and the one with `accounting.transactions` is not.
+ *
+ * `offline_access` on its own is ALSO refused — it modifies a request rather
+ * than naming data, so it is only valid alongside a resource scope. That makes
+ * a per-scope probe read as "offline_access is not allowed", which it is not.
+ */
+export const SCOPES = 'offline_access accounting.invoices accounting.contacts accounting.settings.read';
 
 /** Australian tax types. OUTPUT is GST on Income; BASEXCLUDED carries no GST. */
 export const TAX_GST = 'OUTPUT';
