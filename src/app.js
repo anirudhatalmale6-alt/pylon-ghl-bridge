@@ -12,7 +12,7 @@ import { loadMapping } from './mapping.js';
 import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
 import { FormbayClient } from './formbay-api.js';
 import { Tracker, renderPage, referencesFromCsv } from './tracker.js';
-import { XeroClient } from './xero.js';
+import { XeroClient, buildInvoice } from './xero.js';
 
 /**
  * Wires everything together and returns { app, store, queue, processor } so the
@@ -250,6 +250,77 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     } catch (err) {
       logger.error('xero connection failed', { error: err });
       return res.status(502).type('html').send(`<p>Could not complete the connection: ${err.message}</p>`);
+    }
+  });
+
+  /**
+   * Raises ONE sample invoice into Xero so the numbers can be seen before the
+   * business gives up the sync it has today.
+   *
+   * GoHighLevel's Xero integration cannot separate invoice sync from contact
+   * sync, so going live means disconnecting the thing that currently works.
+   * Nobody should have to do that on trust.
+   *
+   * Three deliberate choices, all so this cannot be mistaken for real money:
+   *   - DRAFT, never SUBMITTED, so it does not enter anyone's approval queue.
+   *   - A test contact name, not a real customer, so no one's account is touched.
+   *   - It refuses to run unless asked by name (?confirm=yes). This writes to
+   *     live books; a mistyped URL should do nothing at all.
+   *
+   * The figures are a real signed contract's shape: a system price carrying GST
+   * and two rebates carrying none.
+   */
+  app.post('/xero/test-invoice', requireAdmin(config), async (req, res) => {
+    if (!xero.configured || !xero.connected) {
+      return res.status(503).json({ ok: false, error: 'Xero is not connected yet. Check /xero/status.' });
+    }
+    if (String(req.query.confirm ?? '') !== 'yes') {
+      return res.status(400).json({
+        ok: false,
+        error: 'This writes a draft invoice into the live Xero organisation. Add ?confirm=yes if that is what you want.',
+      });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const body = buildInvoice({
+      contactName: 'ZZZ TEST - Pylon bridge (safe to delete)',
+      invoiceNumber: `TEST-${today.replace(/-/g, '')}`,
+      reference: 'TEST - not a real job',
+      issueDate: today,
+      dueDate: today,
+      currency: 'AUD',
+      systemLine: {
+        description: '10.56kW solar system with battery - TEST INVOICE, SAFE TO DELETE\nThis is a sample raised to check the GST treatment. It is not a real job.',
+        amount: 20000,
+      },
+      rebateLines: [
+        { description: 'Less Small-scale Technology Certificates (STC)', amount: 4400 },
+        { description: 'Less Peak Reduction Certificates (PRC)', amount: 3000 },
+      ],
+      // DRAFT, not the SUBMITTED a real invoice uses: a test must not land in
+      // anybody's approval queue looking like something to approve.
+      status: 'DRAFT',
+    });
+
+    try {
+      const result = await xero.call({ method: 'POST', path: '/Invoices', body });
+      const created = result?.Invoices?.[0];
+      logger.info('xero test invoice raised', { id: created?.InvoiceID, status: created?.Status });
+      return res.json({
+        ok: true,
+        xeroInvoiceId: created?.InvoiceID ?? null,
+        invoiceNumber: created?.InvoiceNumber ?? null,
+        status: created?.Status ?? null,
+        expected: {
+          systemLine: 'GST on Income, 10% - $20,000.00 plus $2,000.00 GST',
+          rebateLines: 'BAS Excluded, no GST - minus $4,400.00 and minus $3,000.00',
+          total: '$14,600.00 including $2,000.00 GST',
+        },
+        whereToFind: 'Xero > Business > Invoices > Draft. Delete it when you have seen it.',
+      });
+    } catch (error) {
+      logger.warn('xero test invoice failed', { error });
+      return res.status(502).json({ ok: false, error: error.message });
     }
   });
 

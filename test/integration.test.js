@@ -2499,3 +2499,62 @@ test('a missing tax type is reported as missing, not assumed present', async (t)
   const { noGst } = await h.bridge.xero.taxTypes();
   assert.equal(noGst.found, false, 'an absent BAS Excluded must not read as present');
 });
+
+// --- the sample invoice used to prove it before going live ------------------
+
+async function connectedXero(t) {
+  const fake = await startFakeXero();
+  const h = await harness({
+    config: { ...SINGLE, xero: { enabled: false, clientId: 'id', clientSecret: 'secret', apiBase: fake.base } },
+  });
+  t.after(async () => { await h.close(); await fake.close(); });
+  h.bridge.xero.write({ accessToken: 't', tenantId: 'tenant-abc', refreshToken: 'r', expiresAt: Date.now() + 3600_000 });
+  return { h, fake };
+}
+
+test('the test invoice refuses to write to live books unless asked by name', async (t) => {
+  const { h, fake } = await connectedXero(t);
+  const res = await fetch(`${h.bridge.base}/xero/test-invoice?token=admin-test-token`, { method: 'POST' });
+  // A mistyped or half-remembered URL must not put an invoice in someone's
+  // accounting system.
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /confirm=yes/);
+  assert.equal(fake.invoices().length, 0, 'nothing was written');
+});
+
+test('the test invoice is a DRAFT, clearly marked, and never touches a real customer', async (t) => {
+  const { h, fake } = await connectedXero(t);
+  const res = await fetch(`${h.bridge.base}/xero/test-invoice?confirm=yes&token=admin-test-token`, { method: 'POST' });
+  assert.equal(res.status, 200);
+
+  const invoice = fake.invoices()[0].body.Invoices[0];
+  // DRAFT, not SUBMITTED: a sample must not appear in the approval queue
+  // looking like something somebody is supposed to approve.
+  assert.equal(invoice.Status, 'DRAFT');
+  assert.match(invoice.Contact.Name, /TEST/i, 'a test contact, not a real customer');
+  assert.match(invoice.LineItems[0].Description, /TEST INVOICE, SAFE TO DELETE/);
+
+  // And it still demonstrates the thing it exists to demonstrate.
+  assert.equal(invoice.LineItems[0].TaxType, 'OUTPUT');
+  assert.equal(invoice.LineItems.length, 3);
+  for (const line of invoice.LineItems.slice(1)) {
+    assert.equal(line.TaxType, 'BASEXCLUDED');
+    assert.ok(line.UnitAmount < 0);
+  }
+});
+
+test('the test invoice needs the admin token', async (t) => {
+  const { h, fake } = await connectedXero(t);
+  const res = await fetch(`${h.bridge.base}/xero/test-invoice?confirm=yes`, { method: 'POST' });
+  assert.equal(res.status, 401);
+  assert.equal(fake.invoices().length, 0);
+});
+
+test('the test invoice does not need invoicing to be switched on', async (t) => {
+  // The point of it is to prove the thing BEFORE going live, so it has to work
+  // while xero.enabled is still false.
+  const { h } = await connectedXero(t);
+  assert.equal(h.config.xero.enabled, false);
+  const res = await fetch(`${h.bridge.base}/xero/test-invoice?confirm=yes&token=admin-test-token`, { method: 'POST' });
+  assert.equal(res.status, 200);
+});
