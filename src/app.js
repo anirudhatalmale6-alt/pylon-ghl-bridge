@@ -324,6 +324,41 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
     }
   });
 
+  /**
+   * Reads one invoice back out of Xero.
+   *
+   * Posting an invoice and reading our own request back proves nothing about
+   * the tax: the numbers that matter are the ones XERO calculated. This returns
+   * its totals and the tax it worked out per line, so "no GST on the rebates"
+   * can be checked rather than assumed.
+   */
+  app.get('/xero/invoice/:id', requireAdmin(config), async (req, res) => {
+    if (!xero.connected) return res.status(503).json({ ok: false, error: 'Xero is not connected.' });
+    try {
+      const data = await xero.call({ method: 'GET', path: `/Invoices/${encodeURIComponent(req.params.id)}` });
+      const invoice = data?.Invoices?.[0];
+      if (!invoice) return res.status(404).json({ ok: false, error: 'Xero has no invoice with that id.' });
+      return res.json({
+        ok: true,
+        invoiceNumber: invoice.InvoiceNumber,
+        status: invoice.Status,
+        contact: invoice.Contact?.Name ?? null,
+        // Xero's own arithmetic, not ours.
+        subTotal: invoice.SubTotal,
+        totalTax: invoice.TotalTax,
+        total: invoice.Total,
+        lines: (invoice.LineItems ?? []).map((l) => ({
+          description: String(l.Description ?? '').split('\n')[0],
+          amount: l.LineAmount,
+          taxType: l.TaxType,
+          taxAmount: l.TaxAmount,
+        })),
+      });
+    } catch (error) {
+      return res.status(502).json({ ok: false, error: error.message });
+    }
+  });
+
   app.get('/xero/status', requireAdmin(config), async (req, res) => {
     const stored = xero.read();
     const body = {

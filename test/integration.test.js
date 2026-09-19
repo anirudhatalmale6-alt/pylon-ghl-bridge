@@ -2558,3 +2558,24 @@ test('the test invoice does not need invoicing to be switched on', async (t) => 
   const res = await fetch(`${h.bridge.base}/xero/test-invoice?confirm=yes&token=admin-test-token`, { method: 'POST' });
   assert.equal(res.status, 200);
 });
+
+test('reading the invoice back shows XERO calculated no GST on the rebates', async (t) => {
+  const { h } = await connectedXero(t);
+  const created = await fetch(`${h.bridge.base}/xero/test-invoice?confirm=yes&token=admin-test-token`, { method: 'POST' })
+    .then((r) => r.json());
+
+  // Posting an invoice and reading our own request back proves nothing about
+  // the tax. These are Xero's numbers.
+  const back = await fetch(`${h.bridge.base}/xero/invoice/${created.xeroInvoiceId}?token=admin-test-token`)
+    .then((r) => r.json());
+
+  const [system, ...rebates] = back.lines;
+  assert.equal(system.taxAmount, 2000, 'GST on the full price before rebates');
+  for (const line of rebates) {
+    assert.equal(line.taxAmount, 0, 'a rebate must carry no GST at all');
+    assert.ok(line.amount < 0);
+  }
+  assert.equal(back.totalTax, 2000, 'the invoice GST is the system line GST, untouched by the rebates');
+  assert.equal(back.subTotal, 12600);
+  assert.equal(back.total, 14600);
+});

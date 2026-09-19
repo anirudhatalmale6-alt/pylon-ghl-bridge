@@ -365,6 +365,21 @@ export async function startFakeXero({ failInvoices = false, contacts = [], taxRa
       });
     }
 
+    // Reading one invoice back. Tax is computed the way Xero does it, so a test
+    // that checks "no GST on the rebates" is checking arithmetic, not an echo.
+    if (req.method === 'GET' && url.pathname.startsWith('/Invoices/')) {
+      const posted = calls.filter((c) => c.method === 'POST' && c.path === '/Invoices').at(-1);
+      const sent = posted?.body?.Invoices?.[0];
+      if (!sent) return json(res, 404, { Invoices: [] });
+      const lines = (sent.LineItems ?? []).map((l) => {
+        const amount = Number(l.UnitAmount) * Number(l.Quantity ?? 1);
+        return { ...l, LineAmount: amount, TaxAmount: l.TaxType === 'OUTPUT' ? Math.round(amount * 10) / 100 : 0 };
+      });
+      const subTotal = lines.reduce((t, l) => t + l.LineAmount, 0);
+      const totalTax = lines.reduce((t, l) => t + l.TaxAmount, 0);
+      return json(res, 200, { Invoices: [{ ...sent, LineItems: lines, SubTotal: subTotal, TotalTax: totalTax, Total: subTotal + totalTax }] });
+    }
+
     if (req.method === 'GET' && url.pathname === '/TaxRates') {
       return json(res, 200, { TaxRates: taxRates ?? [
         { TaxType: 'OUTPUT', Name: 'GST on Income', EffectiveRate: 10, Status: 'ACTIVE' },
