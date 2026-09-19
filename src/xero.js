@@ -285,6 +285,26 @@ export class XeroClient {
     return { name, legalName: org.LegalName ?? null, countryCode: org.CountryCode ?? null, isDemoCompany: Boolean(org.IsDemoCompany) };
   }
 
+  /**
+   * Whether the two tax types the invoice depends on exist in THIS organisation
+   * and are still active.
+   *
+   * Worth asking before anything is billed. Every line of our invoice names its
+   * own TaxType; if `BASEXCLUDED` were missing or archived here, the rebate
+   * lines would be refused or silently mistreated — and the entire point of
+   * writing to Xero directly is keeping GST off those lines.
+   */
+  async taxTypes() {
+    const data = await this.call({ method: 'GET', path: '/TaxRates' });
+    const find = (type) => {
+      const rate = (data?.TaxRates ?? []).find((r) => r.TaxType === type);
+      return rate
+        ? { found: true, name: rate.Name, rate: rate.EffectiveRate, status: rate.Status }
+        : { found: false };
+    };
+    return { gst: { taxType: TAX_GST, ...find(TAX_GST) }, noGst: { taxType: TAX_NO_GST, ...find(TAX_NO_GST) } };
+  }
+
   async call({ method, path: urlPath, body }) {
     const token = await this.accessToken();
     const tenantId = await this.tenantId();

@@ -333,7 +333,7 @@ function json(res, status, payload) {
  * included — instead of through a hand-written imitation of it that would agree
  * with whatever the code happens to do.
  */
-export async function startFakeXero({ failInvoices = false, contacts = [] } = {}) {
+export async function startFakeXero({ failInvoices = false, contacts = [], taxRates = null } = {}) {
   const calls = [];
   // Mutable so a test can bring Xero back up mid-flight and replay against it.
   const state = { failInvoices };
@@ -363,6 +363,13 @@ export async function startFakeXero({ failInvoices = false, contacts = [] } = {}
       return json(res, 200, {
         Invoices: [{ ...sent, InvoiceID: 'xero-inv-1', Status: sent.Status ?? 'DRAFT' }],
       });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/TaxRates') {
+      return json(res, 200, { TaxRates: taxRates ?? [
+        { TaxType: 'OUTPUT', Name: 'GST on Income', EffectiveRate: 10, Status: 'ACTIVE' },
+        { TaxType: 'BASEXCLUDED', Name: 'BAS Excluded', EffectiveRate: 0, Status: 'ACTIVE' },
+      ] });
     }
 
     if (req.method === 'GET' && url.pathname === '/Organisation') {

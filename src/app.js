@@ -278,6 +278,13 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
       try {
         const org = await xero.organisation();
         body.live = { reachable: true, organisation: org?.name ?? null, isDemoCompany: org?.isDemoCompany ?? null };
+        // Read-only, and the answer decides whether the rebate lines can be
+        // GST-free at all.
+        try {
+          body.live.taxTypes = await xero.taxTypes();
+        } catch (err) {
+          body.live.taxTypes = { error: err.message };
+        }
       } catch (err) {
         body.live = { reachable: false, error: err.message };
       }

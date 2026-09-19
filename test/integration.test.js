@@ -2464,3 +2464,38 @@ test('the Xero scopes are the ones the real app actually accepts', async () => {
   // 30 minutes and never comes back.
   assert.match(SCOPES, /(^|\s)offline_access(\s|$)/);
 });
+
+test('the tax types the invoice depends on are checked against the real org', async (t) => {
+  const fake = await startFakeXero();
+  const h = await harness({
+    config: { ...SINGLE, xero: { enabled: true, clientId: 'id', clientSecret: 'secret', apiBase: fake.base } },
+  });
+  t.after(async () => { await h.close(); await fake.close(); });
+  h.bridge.xero.write({ accessToken: 't', tenantId: 'tenant-abc', expiresAt: Date.now() + 3600_000 });
+
+  const { gst, noGst } = await h.bridge.xero.taxTypes();
+  // If BASEXCLUDED were missing or archived in their Xero, the rebate lines
+  // could not be GST-free - which is the entire reason for writing to Xero
+  // directly rather than letting GoHighLevel sync.
+  assert.deepEqual(
+    { t: gst.taxType, found: gst.found },
+    { t: 'OUTPUT', found: true },
+  );
+  assert.deepEqual(
+    { t: noGst.taxType, found: noGst.found },
+    { t: 'BASEXCLUDED', found: true },
+  );
+  assert.equal(noGst.rate, 0, 'the GST-free rate must actually be zero');
+});
+
+test('a missing tax type is reported as missing, not assumed present', async (t) => {
+  const fake = await startFakeXero({ taxRates: [{ TaxType: 'OUTPUT', Name: 'GST on Income', EffectiveRate: 10, Status: 'ACTIVE' }] });
+  const h = await harness({
+    config: { ...SINGLE, xero: { enabled: true, clientId: 'id', clientSecret: 'secret', apiBase: fake.base } },
+  });
+  t.after(async () => { await h.close(); await fake.close(); });
+  h.bridge.xero.write({ accessToken: 't', tenantId: 'tenant-abc', expiresAt: Date.now() + 3600_000 });
+
+  const { noGst } = await h.bridge.xero.taxTypes();
+  assert.equal(noGst.found, false, 'an absent BAS Excluded must not read as present');
+});
