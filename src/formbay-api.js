@@ -156,6 +156,9 @@ export function summarise(data = {}, parsed = {}) {
      * reconciliation that this tracker exists to serve.
      */
     soldDateSuspect: isBefore(soldDate, installedDate),
+    // The untouched value, so a query to Formbay can quote what their API
+    // actually returned rather than something reformatted on the way through.
+    soldDateRaw: data.sold_date ?? null,
     installedDate,
     certificates,
     price,

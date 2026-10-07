@@ -228,6 +228,24 @@ export function crossesPeriod(installedDate, soldDate) {
 }
 
 /**
+ * Sold, as one word, for filtering at month and quarter end.
+ *
+ *   Yes   - Formbay holds a sold date and it is possible.
+ *   No    - Formbay holds no sold date.
+ *   Check - Formbay holds a sold date that falls BEFORE the installation.
+ *
+ * "Check" rather than folding those into Yes or No. Calling them No sends
+ * somebody chasing money that may already be in the bank; calling them Yes
+ * books a payment on a date that cannot be right. Neither is a filter anyone
+ * should reconcile against, and there are only 33 of them.
+ */
+export function soldFlag(job = {}) {
+  if (!job.ok) return '';
+  if (!job.soldDate) return 'No';
+  return job.soldDateSuspect ? 'Check' : 'Yes';
+}
+
+/**
  * Every field, one row per Formbay job, for reconciling in a spreadsheet.
  *
  * The page answers "how much is outstanding"; this answers "which jobs crossed
@@ -236,7 +254,7 @@ export function crossesPeriod(installedDate, soldDate) {
 export function renderCsv(jobs = []) {
   const header = [
     'Formbay #', 'Type', 'Site', 'Job #', 'Certificates', 'Price', 'Value',
-    'Installation date', 'Formbay status', 'Sold/paid date',
+    'Installation date', 'Formbay status', 'Sold', 'Sold/paid date',
     'Installed quarter', 'Paid quarter', 'Crosses period', 'Data warning',
   ];
   const cell = (v) => {
@@ -257,6 +275,7 @@ export function renderCsv(jobs = []) {
       j.value,
       j.installedDate,
       j.ok ? (j.status ?? '') : `could not be read: ${j.error ?? ''}`,
+      soldFlag(j),
       j.soldDate,
       installedQ,
       j.soldDateSuspect ? '' : paidQ,
@@ -299,6 +318,7 @@ export function renderPage({ summary, jobs, token, status = null }) {
         <td class="num strong">${money(j.value)}</td>
         <td class="mono">${esc(j.jobNumber)}</td>
         <td class="mono">${esc(j.installedDate)}</td>
+        <td>${esc(soldFlag(j))}</td>
         <td class="mono">${esc(j.soldDate)}${j.soldDateSuspect
           ? ' <span class="flag bad" title="Formbay has this sold before it was installed, which cannot be right">before install</span>'
           : crosses ? ` <span class="flag" title="installed ${esc(j.installedDate)}, paid ${esc(j.soldDate)}">${esc(crosses)}</span>` : ''}</td>
@@ -320,7 +340,7 @@ header h1{margin:0;font-size:18px}header p{margin:4px 0 0;font-size:12px;opacity
 .card{flex:1 1 180px;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .card b{display:block;font-size:20px;color:var(--navy)}.card span{font-size:11px;color:var(--muted)}
 .tablewrap{background:#fff;border:1px solid var(--line);border-radius:10px;overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-size:13px;min-width:1020px}
+table{border-collapse:collapse;width:100%;font-size:13px;min-width:1100px}
 th{background:#eef1f6;color:var(--navy);text-align:left;padding:9px 10px;font-size:11px;
    letter-spacing:.04em;text-transform:uppercase;position:sticky;top:0}
 td{padding:8px 10px;border-top:1px solid #eef1f5;vertical-align:top}
@@ -359,8 +379,8 @@ ${(summary.byStatus ?? []).map((g) => `<tr${status === g.status ? ' class="sold"
 
 ${status ? `<p class="note" style="margin:0 0 10px"><strong>Showing only: ${esc(status)}</strong> &mdash; ${shown.length} of ${jobs.length} jobs.</p>` : ''}
 <div class="tablewrap"><table>
-<tr><th>Formbay #</th><th>Type</th><th>Site</th><th>Certs</th><th>Price</th><th>Value</th><th>Job #</th><th>Installed</th><th>Sold / paid</th><th>Status</th></tr>
-${rows || '<tr><td colspan="10">Nothing tracked yet.</td></tr>'}
+<tr><th>Formbay #</th><th>Type</th><th>Site</th><th>Certs</th><th>Price</th><th>Value</th><th>Job #</th><th>Installed</th><th>Sold</th><th>Sold / paid</th><th>Status</th></tr>
+${rows || '<tr><td colspan="11">Nothing tracked yet.</td></tr>'}
 </table></div>
 <p class="note"><strong>"Approved" does not mean paid.</strong> It is Formbay's workflow status
 for a job whose paperwork has passed validation. The money is the <strong>sold / paid date</strong> column:

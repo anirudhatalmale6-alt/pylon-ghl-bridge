@@ -300,7 +300,7 @@ test('an address containing a comma does not shift the spreadsheet columns', asy
   assert.match(row, /"5 St James Av, Menangle NSW"/);
   // Quoted correctly means the count is right.
   const { splitCsvLine } = await import('../src/tracker.js');
-  assert.equal(splitCsvLine(row).length, 14);
+  assert.equal(splitCsvLine(row).length, 15);
 });
 
 test('a sold date before the installation is flagged, not counted as a sale', async () => {
@@ -354,4 +354,40 @@ test('the spreadsheet warns on an impossible sold date and leaves its quarter bl
   // No paid quarter, so it cannot be summed into FY13 by a pivot table.
   assert.doesNotMatch(row, /Q4 FY13/);
   assert.doesNotMatch(row, /,yes,/, 'and it is not reported as a genuine period crossing');
+});
+
+test('the Sold column answers Yes, No or Check and never guesses', async () => {
+  const { soldFlag } = await import('../src/tracker.js');
+  assert.equal(soldFlag({ ok: true, soldDate: '07/07/2025', soldDateSuspect: false }), 'Yes');
+  assert.equal(soldFlag({ ok: true, soldDate: null }), 'No');
+  // The 33. Calling them No sends somebody chasing money that may already be
+  // banked; calling them Yes books a payment on a date that cannot be right.
+  assert.equal(soldFlag({ ok: true, soldDate: '23/05/2013', soldDateSuspect: true }), 'Check');
+  assert.equal(soldFlag({ ok: false }), '', 'a job we could not read is not an answer either way');
+});
+
+test('the Sold column is in the spreadsheet next to the dates', async () => {
+  const { renderCsv } = await import('../src/tracker.js');
+  const csv = renderCsv([
+    { reference: 'PV1', kind: 'pv', ok: true, address: 'a', certificates: 1, price: 1, value: 1,
+      installedDate: '01/08/2025', soldDate: '02/08/2025', soldDateSuspect: false, status: 'approved' },
+    { reference: 'BSTC1', kind: 'bstc', ok: true, address: 'b', certificates: 1, price: 1, value: 1,
+      installedDate: '03/11/2025', soldDate: '23/05/2013', soldDateSuspect: true, status: 'approved' },
+    { reference: 'PV2', kind: 'pv', ok: true, address: 'c', certificates: 1, price: 1, value: 1,
+      installedDate: '01/08/2025', soldDate: null, status: 'approved' },
+  ]);
+  const [header, ...rows] = csv.split('\r\n');
+  const cols = header.split(',');
+  assert.ok(cols.includes('Sold'), 'the column accounts filter on');
+  const soldIndex = cols.indexOf('Sold');
+  const { splitCsvLine } = await import('../src/tracker.js');
+  assert.deepEqual(rows.map((r) => splitCsvLine(r)[soldIndex]), ['Yes', 'Check', 'No']);
+});
+
+test('the raw Formbay timestamp is kept so the fault can be reported', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // Formbay need to be told what their own API returned, not a reformatting of it.
+  const job = summarise({ calrec: '1', price: 1, idate: '03/11/2025', sold_date: '1369282570' }, { kind: 'bstc', id: '153957' });
+  assert.equal(job.soldDateRaw, '1369282570');
+  assert.equal(job.soldDate, '23/05/2013');
 });
