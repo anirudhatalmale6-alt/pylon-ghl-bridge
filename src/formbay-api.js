@@ -136,13 +136,27 @@ export function summarise(data = {}, parsed = {}) {
   const certificates = toNumber(data.calrec ?? data.calbstc ?? data.calstc ?? data.certificates);
   const price = toNumber(data.price);
   const value = certificates !== null && price !== null ? Math.round(certificates * price * 100) / 100 : null;
+  const soldDate = formbayDate(data.sold_date);
+  const installedDate = data.idate || null;
+
   return {
     kind: parsed.kind ?? null,
     formId: parsed.id ?? null,
     jobNumber: data.urref || null, // the "Ref Id" printed on a Formbay payment advice
     status: data.status || null,
-    soldDate: formbayDate(data.sold_date),
-    installedDate: data.idate || null,
+    soldDate,
+    /**
+     * Formbay returns a sold date EARLIER than the installation on 33 battery
+     * jobs — 2013 to 2015, before the battery scheme existed and, on the ones
+     * checked, before the Formbay record itself was created. Certificates are
+     * created by the installation, so a sale cannot precede it.
+     *
+     * Flagged rather than dropped or trusted. Trusting it books payments into
+     * a quarter a decade early; dropping it silently hides jobs from the
+     * reconciliation that this tracker exists to serve.
+     */
+    soldDateSuspect: isBefore(soldDate, installedDate),
+    installedDate,
     certificates,
     price,
     value,
@@ -183,6 +197,17 @@ export function formbayDate(value) {
     return `${String(d.getUTCDate()).padStart(2, '0')}/${String(d.getUTCMonth() + 1).padStart(2, '0')}/${d.getUTCFullYear()}`;
   }
   return text;
+}
+
+/** True when both are dd/mm/yyyy and the first is strictly earlier. */
+function isBefore(a, b) {
+  const parse = (text) => {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(text ?? '').trim());
+    return m ? `${m[3]}${m[2]}${m[1]}` : null;
+  };
+  const left = parse(a);
+  const right = parse(b);
+  return Boolean(left && right && left < right);
 }
 
 function toNumber(value) {

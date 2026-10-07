@@ -289,7 +289,7 @@ test('the spreadsheet carries both dates and both quarters per job', async () =>
   assert.match(row, /solar/, 'solar and battery must be distinguishable in the sheet');
   assert.match(row, /29\/09\/2025/);
   assert.match(row, /15\/10\/2025/);
-  assert.match(row, /Q1 FY26,Q2 FY26,yes$/, 'the crossing is flagged for filtering');
+  assert.match(row, /Q1 FY26,Q2 FY26,yes,$/, 'the crossing is flagged for filtering, with no data warning');
 });
 
 test('an address containing a comma does not shift the spreadsheet columns', async () => {
@@ -300,5 +300,58 @@ test('an address containing a comma does not shift the spreadsheet columns', asy
   assert.match(row, /"5 St James Av, Menangle NSW"/);
   // Quoted correctly means the count is right.
   const { splitCsvLine } = await import('../src/tracker.js');
-  assert.equal(splitCsvLine(row).length, 13);
+  assert.equal(splitCsvLine(row).length, 14);
+});
+
+test('a sold date before the installation is flagged, not counted as a sale', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // BSTC153957, real: Formbay returns sold_date 1369282570 (23/05/2013) on a
+  // job installed 03/11/2025 and created in Sep 2025. Certificates are created
+  // BY the installation, so a sale cannot come first - and the battery scheme
+  // did not exist in 2013.
+  const job = summarise({ calrec: '122', price: 39.3, idate: '03/11/2025', sold_date: '1369282570' }, { kind: 'bstc', id: '153957' });
+  assert.equal(job.soldDate, '23/05/2013', 'the raw value is still shown, not hidden');
+  assert.equal(job.soldDateSuspect, true);
+
+  const real = summarise({ calrec: '109', price: 39.3, idate: '07/07/2025', sold_date: '1751928929' }, { kind: 'pv', id: '1108339' });
+  assert.equal(real.soldDate, '07/07/2025');
+  assert.equal(real.soldDateSuspect, false, 'a genuine sale must not be flagged');
+});
+
+test('an impossible sold date is kept out of the sold total', async (t) => {
+  const { Tracker } = await import('../src/tracker.js');
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tracker-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const tracker = new Tracker({ dataDir: dir, client: null });
+  tracker.write({ refreshedAt: null, jobs: [
+    { reference: 'PV1', ok: true, value: 1000, soldDate: '07/07/2025', installedDate: '07/07/2025', soldDateSuspect: false, status: 'approved' },
+    { reference: 'BSTC1', ok: true, value: 5000, soldDate: '23/05/2013', installedDate: '03/11/2025', soldDateSuspect: true, status: 'approved' },
+    { reference: 'BSTC2', ok: true, value: 2000, soldDate: null, installedDate: '03/11/2025', status: 'approved' },
+  ] });
+
+  const s = tracker.summary();
+  // Booking $5,000 into 2013 would misstate a quarter that is already closed.
+  assert.deepEqual(s.sold, { count: 1, value: 1000 });
+  assert.deepEqual(s.suspectSoldDate, { count: 1, value: 5000 });
+  assert.deepEqual(s.noSoldDate, { count: 1, value: 2000 });
+  // Still counted somewhere - the money has not vanished from the tracker.
+  assert.equal(s.totalValue, 8000);
+  assert.ok(s.byStatus.some((g) => g.status === 'sold date is impossible' && g.count === 1));
+});
+
+test('the spreadsheet warns on an impossible sold date and leaves its quarter blank', async () => {
+  const { renderCsv } = await import('../src/tracker.js');
+  const csv = renderCsv([
+    { reference: 'BSTC153957', kind: 'bstc', ok: true, address: 'x', certificates: 122, price: 39.3, value: 4794.6,
+      installedDate: '03/11/2025', soldDate: '23/05/2013', soldDateSuspect: true, status: 'approved' },
+  ]);
+  const row = csv.split('\r\n')[1];
+  assert.match(row, /query with Formbay/);
+  // No paid quarter, so it cannot be summed into FY13 by a pivot table.
+  assert.doesNotMatch(row, /Q4 FY13/);
+  assert.doesNotMatch(row, /,yes,/, 'and it is not reported as a genuine period crossing');
 });

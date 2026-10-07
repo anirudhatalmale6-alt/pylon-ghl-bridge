@@ -87,7 +87,10 @@ export class Tracker {
   summary() {
     const { jobs, refreshedAt } = this.read();
     const live = jobs.filter((j) => j.ok);
-    const sold = live.filter((j) => j.soldDate);
+    // A sold date earlier than the installation is not a sale, so it must not
+    // be totalled as one - it would book the money a decade into the past.
+    const suspect = live.filter((j) => j.soldDate && j.soldDateSuspect);
+    const sold = live.filter((j) => j.soldDate && !j.soldDateSuspect);
     const unsold = live.filter((j) => !j.soldDate);
     const sum = (list) => Math.round(list.reduce((t, j) => t + (j.value ?? 0), 0) * 100) / 100;
     return {
@@ -105,6 +108,7 @@ export class Tracker {
        */
       sold: { count: sold.length, value: sum(sold) },
       noSoldDate: { count: unsold.length, value: sum(unsold) },
+      suspectSoldDate: { count: suspect.length, value: sum(suspect) },
       totalValue: sum(live),
       byStatus: groupByStatus(jobs),
     };
@@ -123,7 +127,13 @@ export class Tracker {
 export function groupByStatus(jobs = []) {
   const groups = new Map();
   for (const job of jobs) {
-    const key = !job.ok ? 'could not be read' : job.soldDate ? 'sold' : (job.status || 'no status');
+    const key = !job.ok
+      ? 'could not be read'
+      : job.soldDate && job.soldDateSuspect
+        ? 'sold date is impossible'
+        : job.soldDate
+          ? 'sold'
+          : (job.status || 'no status');
     const group = groups.get(key) ?? { status: key, count: 0, value: 0 };
     group.count += 1;
     group.value = Math.round((group.value + (job.value ?? 0)) * 100) / 100;
@@ -227,7 +237,7 @@ export function renderCsv(jobs = []) {
   const header = [
     'Formbay #', 'Type', 'Site', 'Job #', 'Certificates', 'Price', 'Value',
     'Installation date', 'Formbay status', 'Sold/paid date',
-    'Installed quarter', 'Paid quarter', 'Crosses period',
+    'Installed quarter', 'Paid quarter', 'Crosses period', 'Data warning',
   ];
   const cell = (v) => {
     const text = v === null || v === undefined ? '' : String(v);
@@ -249,8 +259,9 @@ export function renderCsv(jobs = []) {
       j.ok ? (j.status ?? '') : `could not be read: ${j.error ?? ''}`,
       j.soldDate,
       installedQ,
-      paidQ,
-      installedQ && paidQ && installedQ !== paidQ ? 'yes' : '',
+      j.soldDateSuspect ? '' : paidQ,
+      j.soldDateSuspect ? '' : (installedQ && paidQ && installedQ !== paidQ ? 'yes' : ''),
+      j.soldDateSuspect ? 'sold date is before the installation date - query with Formbay' : '',
     ].map(cell).join(','));
   }
   // \r\n so Excel on Windows does not run the whole file onto one line.
@@ -258,11 +269,17 @@ export function renderCsv(jobs = []) {
 }
 
 export function renderPage({ summary, jobs, token, status = null }) {
-  const statusOf = (j) => (!j.ok ? 'could not be read' : j.soldDate ? 'sold' : (j.status || 'no status'));
+  const statusOf = (j) => (!j.ok
+    ? 'could not be read'
+    : j.soldDate && j.soldDateSuspect
+      ? 'sold date is impossible'
+      : j.soldDate
+        ? 'sold'
+        : (j.status || 'no status'));
   const shown = status ? jobs.filter((j) => statusOf(j) === status) : jobs;
   const rows = shown
     .map((j) => {
-      const state = !j.ok ? 'error' : j.soldDate ? 'sold' : 'pending';
+      const state = !j.ok ? 'error' : j.soldDate && j.soldDateSuspect ? 'error' : j.soldDate ? 'sold' : 'pending';
       // Never invent "not sold": show whatever status Formbay holds.
       const label = !j.ok
         ? (j.error ?? 'could not read')
@@ -282,7 +299,9 @@ export function renderPage({ summary, jobs, token, status = null }) {
         <td class="num strong">${money(j.value)}</td>
         <td class="mono">${esc(j.jobNumber)}</td>
         <td class="mono">${esc(j.installedDate)}</td>
-        <td class="mono">${esc(j.soldDate)}${crosses ? ` <span class="flag" title="installed ${esc(j.installedDate)}, paid ${esc(j.soldDate)}">${esc(crosses)}</span>` : ''}</td>
+        <td class="mono">${esc(j.soldDate)}${j.soldDateSuspect
+          ? ' <span class="flag bad" title="Formbay has this sold before it was installed, which cannot be right">before install</span>'
+          : crosses ? ` <span class="flag" title="installed ${esc(j.installedDate)}, paid ${esc(j.soldDate)}">${esc(crosses)}</span>` : ''}</td>
         <td>${label}</td>
       </tr>`;
     })
@@ -313,6 +332,7 @@ form{display:inline}button,.btn{background:var(--navy);color:#fff;border:0;borde
   padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;display:inline-block;
   text-decoration:none;margin-left:8px}
 .flag{background:#fff3cd;color:var(--warn);border-radius:4px;padding:1px 5px;font-size:11px;white-space:nowrap}
+.flag.bad{background:#fdecea;color:var(--bad)}
 </style></head><body>
 <header><h1>STC tracker</h1>
 <p>Read live from Formbay${summary.refreshedAt ? ` &middot; last refreshed ${esc(summary.refreshedAt.replace('T', ' ').slice(0, 16))} UTC` : ' &middot; never refreshed'}</p></header>
