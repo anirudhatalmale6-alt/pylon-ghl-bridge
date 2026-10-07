@@ -122,7 +122,18 @@ export function parseReference(reference) {
  * price and expects you to multiply. `calbstc` comes back as a string.
  */
 export function summarise(data = {}, parsed = {}) {
-  const certificates = toNumber(data.calbstc ?? data.calstc ?? data.certificates);
+  /**
+   * `calrec` FIRST — it is the only field present on both form types.
+   *
+   * A PV job has no `calbstc` at all, so reading that first left every one of
+   * the 154 solar jobs with no certificate count and therefore no value, while
+   * the battery jobs beside them looked fine. On a site with both, accounts saw
+   * the battery money and nothing for the solar.
+   *
+   * Verified against the live API: `calrec` is present on every job of either
+   * type, and on battery jobs it equals `calbstc` exactly.
+   */
+  const certificates = toNumber(data.calrec ?? data.calbstc ?? data.calstc ?? data.certificates);
   const price = toNumber(data.price);
   const value = certificates !== null && price !== null ? Math.round(certificates * price * 100) / 100 : null;
   return {

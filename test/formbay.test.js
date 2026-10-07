@@ -229,3 +229,76 @@ test('a live-shaped job.updated carries the reference and the status through', a
     await bridge.close();
   }
 });
+
+// --- the fields accounts reconcile against ---------------------------------
+
+test('a PV job gets a certificate count and therefore a value', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // A real PV job: calrec and NO calbstc. Reading calbstc first left all 154
+  // solar jobs blank while the batteries beside them looked fine.
+  const job = summarise({ calrec: '109', price: 39.3, status: 'approved', idate: '07/07/2025' }, { kind: 'pv', id: '1108339' });
+  assert.equal(job.certificates, 109);
+  assert.equal(job.value, 4283.7);
+});
+
+test('a battery job still reads the same count it always did', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // calrec and calbstc agree on every battery job checked against the live API.
+  const job = summarise({ calrec: 357, calbstc: '357', price: 39.3 }, { kind: 'bstc', id: '139157' });
+  assert.equal(job.certificates, 357);
+  assert.equal(job.value, 14030.1);
+});
+
+test('a solar job and a battery job at one site are two rows that add up', async () => {
+  const { summarise } = await import('../src/formbay-api.js');
+  // Formbay holds them as separate jobs, so the tracker cannot merge them
+  // without inventing a record. Accounts add the two.
+  const solar = summarise({ calrec: '109', price: 39.3 }, { kind: 'pv', id: '1108339' });
+  const battery = summarise({ calrec: '238', price: 39.3 }, { kind: 'bstc', id: '118903' });
+  // 109 + 238 certificates at $39.30 - the real Menangle site.
+  assert.equal(solar.value, 4283.7);
+  assert.equal(battery.value, 9353.4);
+  assert.equal(Math.round((solar.value + battery.value) * 100) / 100, 13637.1);
+});
+
+test('the financial quarter is the Australian one, not the calendar one', async () => {
+  const { financialQuarter, crossesPeriod } = await import('../src/tracker.js');
+  assert.equal(financialQuarter('07/07/2025'), 'Q1 FY26', 'July starts the financial year');
+  assert.equal(financialQuarter('30/06/2025'), 'Q4 FY25', 'June ends the previous one');
+  assert.equal(financialQuarter('15/10/2025'), 'Q2 FY26');
+  assert.equal(financialQuarter(''), null);
+  assert.equal(financialQuarter('1751928929'), null, 'a raw timestamp is not a date');
+
+  // The whole point: installed one quarter, paid the next.
+  assert.equal(crossesPeriod('29/09/2025', '15/10/2025'), 'Q1 FY26 → Q2 FY26');
+  assert.equal(crossesPeriod('07/07/2025', '20/08/2025'), null, 'same quarter is not a crossing');
+  assert.equal(crossesPeriod('07/07/2025', null), null, 'an unpaid job has not crossed anything yet');
+});
+
+test('the spreadsheet carries both dates and both quarters per job', async () => {
+  const { renderCsv } = await import('../src/tracker.js');
+  const csv = renderCsv([
+    { reference: 'PV1108339', kind: 'pv', ok: true, address: '5 St James Av, Menangle NSW', jobNumber: '4278',
+      certificates: 109, price: 39.3, value: 4283.7, installedDate: '29/09/2025', soldDate: '15/10/2025', status: 'approved' },
+  ]);
+  const [header, row] = csv.split('\r\n');
+  assert.match(header, /Installation date/);
+  assert.match(header, /Sold\/paid date/);
+  assert.match(header, /Crosses period/);
+  assert.match(row, /PV1108339/);
+  assert.match(row, /solar/, 'solar and battery must be distinguishable in the sheet');
+  assert.match(row, /29\/09\/2025/);
+  assert.match(row, /15\/10\/2025/);
+  assert.match(row, /Q1 FY26,Q2 FY26,yes$/, 'the crossing is flagged for filtering');
+});
+
+test('an address containing a comma does not shift the spreadsheet columns', async () => {
+  const { renderCsv } = await import('../src/tracker.js');
+  // Every address has a comma in it, so this is the normal case, not an edge one.
+  const csv = renderCsv([{ reference: 'PV1', kind: 'pv', ok: true, address: '5 St James Av, Menangle NSW', certificates: 1, price: 1, value: 1 }]);
+  const row = csv.split('\r\n')[1];
+  assert.match(row, /"5 St James Av, Menangle NSW"/);
+  // Quoted correctly means the count is right.
+  const { splitCsvLine } = await import('../src/tracker.js');
+  assert.equal(splitCsvLine(row).length, 13);
+});

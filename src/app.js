@@ -11,7 +11,7 @@ import { createNotifier, buildSummary } from './callback.js';
 import { loadMapping } from './mapping.js';
 import { FormbayLog, describe as describeFormbayEvent, presentedToken, tokenMatches } from './formbay.js';
 import { FormbayClient } from './formbay-api.js';
-import { Tracker, renderPage, referencesFromCsv } from './tracker.js';
+import { Tracker, renderPage, renderCsv, referencesFromCsv } from './tracker.js';
 import { XeroClient, buildInvoice } from './xero.js';
 
 /**
@@ -173,6 +173,26 @@ export function createApp({ config = defaultConfig, skipValidation = false } = {
         status: req.query.status ? String(req.query.status) : null,
       }),
     );
+  });
+
+  /**
+   * The same jobs as a spreadsheet.
+   *
+   * Accounts reconcile against their financial reporting, and "which jobs were
+   * installed in one quarter but not paid until another" is a pivot-table
+   * question. The page answers what is outstanding; this answers that.
+   *
+   * Same ?token= as the page, so the bookmark they already have works.
+   */
+  app.get('/tracker.csv', (req, res) => {
+    if (!isAuthorised(req, config)) {
+      return res.status(401).type('text/plain').send('Add ?token=... to this address.');
+    }
+    const { jobs } = tracker.read();
+    res.type('text/csv; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="stc-tracker-${new Date().toISOString().slice(0, 10)}.csv"`);
+    // A BOM, or Excel reads the addresses as Latin-1 and mangles anything accented.
+    return res.send(`\ufeff${renderCsv(jobs)}`);
   });
 
   app.get('/tracker/summary', requireAdmin(config), (req, res) => res.json({ ok: true, ...tracker.summary() }));
